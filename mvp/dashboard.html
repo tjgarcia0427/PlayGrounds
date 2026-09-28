@@ -77,6 +77,11 @@
     .st-blocked .avatar { filter:saturate(.55) brightness(.85); }
   }
 
+  #campus3d { border-radius:24px; overflow:hidden; background:#f4dfd5; width:100%; min-height:360px; }
+  #campus3d canvas { display:block; width:100%; }
+  .camera-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0; }
+  .camera-controls button, .camera-controls select { border:1px solid #c9bdc9; border-radius:12px; padding:8px 12px; background:#eee3e4; color:#433a52; }
+  #renderStatus { font-size:12px; color:var(--dim); }
   .world-tabs { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
   .world-tabs button { border:1px solid var(--line); border-radius:18px; padding:12px 20px; background:#26324b; color:white; cursor:pointer; }
   .world-tabs button[aria-pressed="true"] { background:#6251ba; }
@@ -107,6 +112,14 @@
 <section aria-label="Shared agent world">
   <div class="world-tabs"><button id="playTab" onclick="focusSpace('playground')" aria-pressed="true">🌳 Playground</button><button id="classTab" onclick="focusSpace('classroom')" aria-pressed="false">📚 Classroom</button></div>
   <p id="worldSummary" aria-live="polite">Waiting for real agent presence…</p>
+  <div class="camera-controls" aria-label="World rendering controls">
+    <label>View <select id="renderMode" disabled><option value="3d">3D diorama</option><option value="2d">2D accessible view</option></select></label>
+    <button id="cameraLeft" aria-label="Rotate camera left">↶</button><button id="cameraRight" aria-label="Rotate camera right">↷</button><button id="cameraHome">Whole campus</button>
+    <label>Zoom <input id="cameraZoom" type="range" min="0.8" max="1.6" step="0.1" value="1"></label>
+    <label><input id="quietMotion" type="checkbox"> Still characters</label>
+  </div>
+  <p id="renderStatus" role="status">Loading the 3D campus; the 2D view stays available.</p>
+  <div id="campus3d" hidden></div>
   <div id="worldStage" data-focus="playground"><div class="zone-label play">Playground<small>Small talk · downtime</small></div><div class="zone-label study">Classroom<small>Study halls · shared goals</small></div><div id="worldAgents"></div></div>
   <p>Watching a space does not move agents. Task activity moves their characters. Faded characters have stale heartbeats or are in the other view.</p>
 </section>
@@ -238,6 +251,7 @@ async function verify(tid, approved) {
 }
 
 function focusSpace(space) {
+  globalThis.dispatchEvent?.(new CustomEvent('playgrounds-focus', {detail:space}));
   document.getElementById('worldStage').dataset.focus = space;
   document.getElementById('playTab').setAttribute('aria-pressed', String(space === 'playground'));
   document.getElementById('classTab').setAttribute('aria-pressed', String(space === 'classroom'));
@@ -246,6 +260,8 @@ function focusSpace(space) {
 }
 const worldNodes = new Map();
 function renderWorld(world, state) {
+  globalThis.playgroundsWorldSnapshot = {world,state};
+  globalThis.dispatchEvent?.(new CustomEvent('playgrounds-world', {detail:{world,state}}));
   const container = document.getElementById('worldAgents');
   const seen = new Set(); const counts = {playground:0, classroom:0};
   for (const agent of [...world.agents].sort((a,b) => a.id.localeCompare(b.id))) {
@@ -276,6 +292,15 @@ const es = new EventSource('/api/events?since=0');
 es.onmessage = () => refresh();
 es.onerror = () => { document.getElementById("connection").textContent = "RECONNECTING — last known presence shown"; };
 setInterval(refresh, 10000);
+</script>
+<script type="module">
+import('/assets/campus.js').catch(() => {
+  document.getElementById('campus3d').hidden = true;
+  document.getElementById('worldStage').hidden = false;
+  document.getElementById('renderMode').value = '2d';
+  document.getElementById('renderMode').disabled = true;
+  document.getElementById('renderStatus').textContent = '3D could not load — the 2D world is available.';
+});
 </script>
 </body>
 </html>

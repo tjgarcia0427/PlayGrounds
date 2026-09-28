@@ -1335,6 +1335,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "avatar not found"})
             with open(fp, "rb") as f:
                 self._send(200, f.read(), "image/png")
+        elif parsed.path in ("/assets/campus.js", "/assets/campus-layout.js",
+                             "/assets/vendor/three.module.js", "/assets/vendor/three.core.js"):
+            # Exact allowlist, never an arbitrary filesystem/static-file route.
+            with open(os.path.join(ROOT, parsed.path.lstrip("/")), "rb") as f:
+                self._send(200, f.read(), "text/javascript; charset=utf-8")
         elif parsed.path == "/api/state":
             with lock:
                 self._send(200, {k: v for k, v in state.items() if k not in ("server_salt", "idempotency")})
