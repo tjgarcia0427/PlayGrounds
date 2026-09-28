@@ -8,7 +8,7 @@ function element() { return {style:{},dataset:{},classList:{toggle(){}},children
   appendChild(x){this.children.push(x)},setAttribute(k,v){this[k]=v},remove(){this.removed=true}}; }
 const document = {getElementById(id){if(!elements.has(id))elements.set(id,element());return elements.get(id)},createElement:element};
 const html=fs.readFileSync(path.join(__dirname,'dashboard.html'),'utf8');
-const script=html.split('<script>')[1].split('</script>')[0].split('\nrefresh();\nconst es')[0];
+const script=html.split('<script>')[1].split('</script>')[0].split('\nfunction clearScope()')[0];
 const context=vm.createContext({document,console,Date,Map,Set});
 vm.runInContext(script,context);
 const world={agents:[{id:'a',name:'<Agent>',plush:'plush1.png',last_heartbeat:Date.now()/1000,presence:{space:'playground',activity:'idle'}}],social_messages:[{agent_id:'a',text:'<img src=x onerror=bad()>',seq:1}]};
