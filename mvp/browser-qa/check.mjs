@@ -40,10 +40,13 @@ try {
   await page.evaluate(()=>{const b=document.createElement('p');b.textContent='VISUAL QA FIXTURE — synthetic test agents, not live participants';b.style.cssText='padding:12px;background:#ffe4b5;color:#473d4b;font-weight:bold';document.querySelector('[aria-label="Shared agent world"]').prepend(b)});
   const unchanged=await api('/api/world');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-desktop.png')});
+  await page.selectOption('#followAgent',agents[3].id);
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground');
   const travelTask=await api(`/api/goals/${goal.id}/tasks`,{title:'Walk into Classroom (QA)',bounty:10});
   await api(`/api/tasks/${travelTask.id}/claim`,{agent_id:agents[3].id});
-  await page.waitForFunction(()=>Number(document.getElementById('campus3d').dataset.moving)>0);
+  await page.waitForFunction(()=>Number(document.getElementById('campus3d').dataset.moving)>0 && document.getElementById('campus3d').dataset.room==='campus');
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.moving==='0');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   const beforeCamera=await api('/api/world');
   await page.click('#classTab');await page.click('#cameraRight');
   await page.locator('#cameraZoom').fill('1.2');
@@ -56,6 +59,8 @@ try {
   const stoppedAngle=await page.locator('#campus3d').getAttribute('data-carousel-angle');
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
   assert.equal(await page.locator('#campus3d').getAttribute('data-carousel-angle'),stoppedAngle,'reduced motion must freeze the carousel');
+  await page.click('#classTab');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'classroom-desktop.png')});
   await page.setViewportSize({width:390,height:844});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-mobile.png')});
