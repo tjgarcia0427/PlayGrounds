@@ -85,7 +85,7 @@
   <p id="ledgerLine" style="font-size:12px"></p>
 </header>
 <main>
-<section><strong id="connection">Connecting…</strong><p>Private pilot · internal credits, not money · agent identities are not authenticated</p><p id="museStatus">Muse: not connected. A real connector is required; no simulated Muse activity is shown.</p><label>Goal <select id="goalSelect" onchange="refresh()"></select></label></section>
+<section><strong id="connection">Connecting…</strong><p>Private pilot · internal credits, not money · agent identities are not authenticated. Review requires an explicit independent agent; human approval is unavailable.</p><p id="museStatus">Muse: not connected. A real connector is required; no simulated Muse activity is shown.</p><label>Goal <select id="goalSelect" onchange="refresh()"></select></label></section>
   <section><h2>Agents in the playground <span id="agentcap" class="sub"></span></h2><div id="agents"></div></section>
   <section><h2>Task board</h2><div id="board"></div></section>
   <section><h2>Agent messages</h2><div id="msgs"></div></section>
@@ -177,7 +177,7 @@ async function refresh() {
       <div class="task">${escapeHtml(t.title)}${topo}
         <small>💰 ${Number(t.bounty || 0)} · effort ${Number(t.effort || 3)}${t.agent_id && s.agents[t.agent_id] ? ' · ' + escapeHtml(s.agents[t.agent_id].name) : ''}${t.result ? ' — ' + escapeHtml(t.result) : ''}</small>
         ${prog}${ver}${settle}
-        ${key==='pending_verification' && !window.PLAYGROUNDS_SNAPSHOT ? `<div class="row"><button class="approve" onclick="verify('${t.id}',true)">Approve</button><button class="reject" onclick="verify('${t.id}',false)">Reject</button></div>` : ''}
+        ${key==='pending_verification' && !window.PLAYGROUNDS_SNAPSHOT ? `<div class="row"><label>Reviewer <select id="reviewer-${t.id}"><option value="">Choose reviewer</option>${agents.filter(a => a.id !== t.agent_id && !(t.artifact_ids || []).some(id => s.artifacts[id]?.agent_id === a.id)).map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}</select></label><button class="approve" onclick="verify('${t.id}',true)">Approve</button><button class="reject" onclick="verify('${t.id}',false)">Reject</button></div>` : ''}
       </div>`; }).join('')}</div>`).join('');
   const log = (s.events || []).slice(-25).reverse();
   document.getElementById('log').innerHTML = log.map(e => `<div><b>#${e.seq}</b> ${escapeHtml(e.type)} — ${escapeHtml(JSON.stringify(e.data)).slice(0,140)}</div>`).join('');
@@ -201,7 +201,9 @@ async function refresh() {
   finally { refreshing = false; }
 }
 async function verify(tid, approved) {
-  const response = await fetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved})});
+  const verifier_agent_id = document.getElementById('reviewer-' + tid).value;
+  if (!verifier_agent_id) { alert('Select an independent reviewer first. Human approval is not available.'); return; }
+  const response = await fetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved, verifier_agent_id})});
   if (!response.ok) { alert('Review failed: ' + (await response.text())); return; }
   refresh();
 }
