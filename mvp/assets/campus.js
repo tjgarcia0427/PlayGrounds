@@ -53,6 +53,11 @@ function buildCampus() {
   const ball=(color,pos,scale,parent)=>mesh(sphere,color,pos,scale,parent);
   const box=(color,pos,scale,parent)=>mesh(cube,color,pos,scale,parent);
   const disc=(color,pos,scale,parent)=>mesh(cylinder,color,pos,scale,parent);
+  function rail(color,from,to,r=.06,parent=scene) {
+    const a=new THREE.Vector3(...from),b=new THREE.Vector3(...to),delta=b.clone().sub(a);
+    const m=disc(color,a.clone().add(b).multiplyScalar(.5).toArray(),[r,delta.length(),r],parent);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());return m;
+  }
   function label(text,x,y,z,width=3,color='#4b435f') {
     const canvas=document.createElement('canvas');canvas.width=512;canvas.height=96;
     const ctx=canvas.getContext('2d');ctx.clearRect(0,0,512,96);
@@ -71,29 +76,50 @@ function buildCampus() {
   for(let i=0;i<10;i++) disc('#f7e8d3',[-1+.15*Math.sin(i),.1,-6+i*1.2],[.5,.1,.4]);
   // Study hall: dollhouse cutaway, cream walls, big blue windows, pink trim.
   box('#f4e5cb',[6.8,2.15,-6.7],[12.6,4.4,.25]);
-  box('#e8d2d7',[13,2.15,-1.2],[.24,4.4,11.3]);
+  // Low plinth plus airy glass keeps the cutaway room readable from outside.
+  box('#e8d2d7',[13,.5,-1.2],[.24,1,11.3]);
+  const glass=new THREE.MeshStandardMaterial({color:'#c4e1dc',transparent:true,opacity:.2,roughness:.2,depthWrite:false});
+  for(const z of [-4.9,-1.3,2.3]) {
+    const pane=new THREE.Mesh(cube,glass);pane.position.set(13,2.65,z);pane.scale.set(.1,3.3,3.4);scene.add(pane);
+    box('#ead9c3',[13,2.65,z-1.7],[.14,3.6,.14]);
+  }
+  // A wood-slat skylight/pergola hints at a modern campus without hiding the agents.
+  for(let i=0;i<11;i++)box('#c99f7c',[1.6+i*1.07,4.5,-5.6],[.13,.18,2.4]);
   box('#d6a29f',[6.8,4.45,-6.7],[13,.24,.6]);
   box('#d6a29f',[13,4.45,-1.2],[.6,.24,11.5]);
-  for(const x of [3,7,11]) {
+  for(const x of [3,11]) {
     box('#eed3a7',[x,2.65,-6.5],[2.75,2.55,.15]);
     box('#b7dce0',[x,2.65,-6.37],[2.4,2.15,.12]);
     box('#fff1d7',[x,2.65,-6.25],[.1,2.25,.12]);
     box('#fff1d7',[x,2.65,-6.25],[2.5,.1,.12]);
   }
-  // Carpet islands and tiny study desks.
+  // Original geometric mural: campus inspiration, not company branding.
+  box('#fff3dc',[7,2.65,-6.44],[3.55,2.6,.12]);
+  const mural=disc('#cfaaa9',[6.5,2.72,-6.32],[.75,.04,.75]);mural.rotation.x=Math.PI/2;
+  const stroke=box('#8fb8b7',[7.7,2.65,-6.28],[.6,1.9,.06]);stroke.rotation.z=-.4;
+  ball('#e6c576',[7.6,3.32,-6.24],[.35,.35,.05]);
+  box('#968ab2',[7.15,1.75,-6.23],[2.45,.12,.05]);
+  // Carpet islands and connected worktables retain the study-hall purpose.
   box('#c3bfdc',[6.7,.13,-.5],[10.5,.07,8.2]);
   const stations=[];
   for(let i=0;i<24;i++) {
     const station=new THREE.Group();scene.add(station);stations.push(station);
     const p=spot('classroom',i);
-    box('#cd9e73',[p.x,.63,p.z-.5],[1.45,.14,.74],station);
+    box('#cd9e73',[p.x,.63,p.z-.5],[1.85,.14,.86],station);
     for(const dx of [-.55,.55]) box('#a77e62',[p.x+dx,.31,p.z-.5],[.09,.62,.48],station);
     box('#fff4d9',[p.x-.15,.735,p.z-.5],[.55,.045,.4],station);
     box('#d59096',[p.x+.14,.76,p.z-.5],[.025,.05,.39],station);
-    disc('#c5b4cf',[p.x,.3,p.z+.38],[.32,.5,.32],station);
+    disc(['#c5b4cf','#a7c3b0','#e3b199','#d9c582'][i%4],[p.x,.3,p.z+.38],[.32,.5,.32],station);
   }
-  disc('#cd9b92',[11,.4,4.2],[.5,.65,.5]);
-  for(let i=0;i<5;i++)ball('#88b6a0',[11+Math.sin(i*1.3)*.35,1+i*.15,4.2+Math.cos(i)*.25],[.2,.5,.18]);
+  // Compact lounge lane stays outside every agent seat/aisle.
+  box('#abbcc9',[11.65,.4,1.4],[1.25,.7,2.5]);
+  box('#b7c8d0',[12.2,.95,1.4],[.24,1.1,2.55]);
+  for(const z of [.7,2.1])ball('#e6b5a2',[11.62,.95,z],[.42,.24,.5]);
+  disc('#ceab86',[11.25,.55,3.6],[.65,.14,.65]);
+  disc('#f1e5cb',[11.25,.28,3.6],[.16,.5,.16]);
+  box('#d0ba76',[11.15,.65,3.6],[.5,.05,.35]);
+  disc('#cd9b92',[11.8,.4,-5.2],[.45,.65,.45]);
+  for(let i=0;i<5;i++)ball('#88b6a0',[11.8+Math.sin(i*1.3)*.3,1+i*.15,-5.2+Math.cos(i)*.2],[.2,.5,.18]);
   // Bookcase: a little crooked rainbow of books, not photorealistic clutter.
   box('#c69774',[1.1,1.1,-5.2],[1.25,2.2,.65]);
   const books=['#a9c9c3','#e6aca9','#d5c1e7','#e8cf85'];
@@ -105,15 +131,44 @@ function buildCampus() {
     ball('#a8d0ac',[x-.55*size,2.5*size,z+.2],[.75*size,.8*size,.7*size]);
     ball('#bfd7aa',[x+.35*size,2.85*size,z],[.65*size,.72*size,.65*size]);
   }
-  for(const [x,z,s] of [[-11,-5,1.2],[-7,-6,1],[-3,-5,.85],[-12,3,.8]])tree(x,z,s);
-  disc('#dfcfbd',[-7,.2,-2.3],[1.65,.35,1.65]);
-  disc('#88c9ce',[-7,.41,-2.3],[1.38,.05,1.38]);
-  disc('#c9bdab',[-7,.65,-2.3],[.25,.5,.25]);
-  ball('#c6e6df',[-7,1.05,-2.3],[.38,.42,.38]);
-  for(const x of [-10.4,-3.7]) {
-    box('#c98f79',[x,.52,-.9],[1.8,.15,.55]);box('#dcaf8d',[x,.96,-1.16],[1.8,.65,.12]);
-    for(const dx of [-.6,.6])box('#a68373',[x+dx,.25,-.9],[.14,.5,.45]);
+  for(const [x,z,s] of [[-12,-5.7,1.05],[-7,-6.6,.8],[-2,-6,.75]])tree(x,z,s);
+  disc('#dfcfbd',[-11,.2,3.4],[1.05,.35,1.05]);
+  disc('#88c9ce',[-11,.41,3.4],[.86,.05,.86]);
+  disc('#c9bdab',[-11,.65,3.4],[.18,.5,.18]);
+  ball('#c6e6df',[-11,.98,3.4],[.25,.32,.25]);
+  // Slide: a tiny roofed tower, ladder and smooth curved pastel chute.
+  disc('#d5cfa7',[-10.5,.07,-2.9],[1.75,.12,2.1]);
+  for(const x of [-11.1,-9.9])for(const z of [-4.1,-3.2])rail('#e6c89c',[x,.1,z],[x,2.25,z],.09);
+  box('#cfa57e',[-10.5,1.6,-3.7],[1.4,.15,1.25]);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(1.12,.6,4),mat('#dba8ac'));roof.rotation.y=Math.PI/4;roof.position.set(-10.5,2.7,-3.7);scene.add(roof);
+  for(let i=0;i<5;i++)rail('#b4caca',[-11.18,.25+i*.3,-4.6],[-9.82,.25+i*.3,-4.6],.065);
+  for(const x of [-11.18,-9.82])rail('#b1b4cf',[x,.1,-4.65],[x,1.8,-4.2],.065);
+  const curve=new THREE.CatmullRomCurve3([new THREE.Vector3(-10.5,1.65,-3.05),new THREE.Vector3(-10.5,1.3,-2.6),new THREE.Vector3(-10.5,.45,-1.5),new THREE.Vector3(-10.5,.2,-.75)]);
+  const chutePoints=[],chuteIndices=[];
+  for(let i=0;i<=20;i++){const p=curve.getPoint(i/20);chutePoints.push(p.x-.46,p.y,p.z,p.x+.46,p.y,p.z);if(i<20){const j=i*2;chuteIndices.push(j,j+2,j+1,j+1,j+2,j+3)}}
+  const chuteGeometry=new THREE.BufferGeometry();chuteGeometry.setAttribute('position',new THREE.Float32BufferAttribute(chutePoints,3));chuteGeometry.setIndex(chuteIndices);chuteGeometry.computeVertexNormals();
+  const chute=new THREE.Mesh(chuteGeometry,new THREE.MeshStandardMaterial({color:'#e9ba77',side:THREE.DoubleSide,roughness:.65}));chute.castShadow=true;scene.add(chute);
+  for(const side of [-.49,.49]) {
+    const points=curve.getPoints(20).map(p=>p.add(new THREE.Vector3(side,.14,0)));
+    const edge=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),20,.08,6,false),mat('#d5999e'));scene.add(edge);
   }
+  // Merry-go-round: a decorative slow turn, never fabricated agent participation.
+  disc('#d9c8bd',[-6.4,.12,-2.8],[1.6,.15,1.6]);
+  const carousel=new THREE.Group();carousel.name='playground-carousel';carousel.position.set(-6.4,.3,-2.8);scene.add(carousel);
+  disc('#a6c7c5',[0,0,0],[1.3,.2,1.3],carousel);
+  disc('#e6c589',[0,.13,0],[.3,.14,.3],carousel);
+  for(let i=0;i<4;i++) {
+    const a=i*Math.PI/2,x=Math.cos(a)*.85,z=Math.sin(a)*.85;
+    rail('#d99a9e',[x,.1,z],[x,.85,z],.055,carousel);
+    rail('#eedbaf',[x,.85,z],[0,.85,0],.055,carousel);
+    ball(['#d8b1c7','#e9ca88','#a7b7d5','#a8c6a3'][i],[x,.18,z],[.32,.09,.32],carousel);
+  }
+  // Monkey bars: two ladders and an overhead rung bridge in mint and lilac.
+  disc('#c4c7b0',[-2.9,.08,-3.4],[1.1,.1,1.9]);
+  for(const x of [-3.6,-2.2])for(const z of [-4.8,-2])rail('#a6b8cf',[x,.1,z],[x,2.15,z],.075);
+  for(const x of [-3.6,-2.2])rail('#a0c3af',[x,2.15,-4.8],[x,2.15,-2],.09);
+  for(let i=0;i<6;i++)rail('#e3c293',[-3.6,2.15,-4.8+i*.56],[-2.2,2.15,-4.8+i*.56],.06);
+  for(const z of [-4.8,-2])for(let i=0;i<5;i++)rail('#c7afd4',[-3.6,.25+i*.38,z],[-2.2,.25+i*.38,z],.06);
   for(let i=0;i<24;i++) {
     const x=-12+(i%12)*.88,z=i<12 ? -6.6 : 6.7;
     disc('#749d83',[x,.24,z],[.025,.4,.025]);
@@ -206,6 +261,11 @@ function buildCampus() {
     if(document.hidden || host.hidden || now-last<1000/30)return;
     last=now;
     const seconds=now/1000;
+    const ambientMotion=!reduce.matches && !document.getElementById('quietMotion').checked;
+    if(ambientMotion)carousel.rotation.y+=Math.min((now-(carousel.userData.lastFrame||now))/1000,.05)*.22;
+    carousel.userData.lastFrame=now;
+    host.dataset.carouselAngle=String(carousel.rotation.y);
+    host.dataset.setting='slide-carousel-monkey-bars-modern-study';
     camera.zoom=zoom;camera.position.set(Math.sin(orbit)*32,24,Math.cos(orbit)*32);
     look.x=reduce.matches?focus:THREE.MathUtils.lerp(look.x,focus,.06);
     camera.lookAt(look.x,0,0);camera.updateProjectionMatrix();

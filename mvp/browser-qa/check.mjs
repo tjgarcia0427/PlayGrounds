@@ -31,6 +31,9 @@ try {
   await page.goto(base,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>document.getElementById('renderStatus').textContent.startsWith('3D campus'),{timeout:20000});
   assert.equal(await page.locator('#campus3d canvas').count(),1);
+  const carouselStart=await page.locator('#campus3d').getAttribute('data-carousel-angle');
+  await page.waitForFunction(start=>Number(document.getElementById('campus3d').dataset.carouselAngle)>Number(start),carouselStart);
+  assert.equal(await page.locator('#campus3d').getAttribute('data-setting'),'slide-carousel-monkey-bars-modern-study');
   assert.equal(await page.locator('#campus3d').isVisible(),true);
   assert.equal(await page.locator('#worldStage').isVisible(),false);
   // Explicit fixture caption is included in each screenshot.
@@ -50,6 +53,9 @@ try {
   await page.click('#cameraHome');
   assert.equal(await page.locator('#cameraZoom').inputValue(),'1');
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.reducedMotion==='true');
+  const stoppedAngle=await page.locator('#campus3d').getAttribute('data-carousel-angle');
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
+  assert.equal(await page.locator('#campus3d').getAttribute('data-carousel-angle'),stoppedAngle,'reduced motion must freeze the carousel');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'classroom-desktop.png')});
   await page.setViewportSize({width:390,height:844});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-mobile.png')});

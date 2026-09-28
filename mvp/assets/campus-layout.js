@@ -7,7 +7,13 @@ export function hashId(id) {
 }
 export function spot(space, index) {
   if (space === 'classroom') return {x: 3.1 + (index % 4) * 2.1, z: -2.3 + Math.floor(index / 4) * 1.35};
-  return {x: -11 + (index % 6) * 1.6, z: .5 + Math.floor(index / 6) * 1.5};
+  // Reserve the fountain corner while keeping the front gate aisle clear.
+  const slots=[];
+  for(let row=0;row<5;row++)for(let col=0;col<6;col++) {
+    const p={x:-11+col*1.6,z:.2+row*1.05};
+    if(Math.hypot(p.x+11,p.z-3.4)>1.65)slots.push(p);
+  }
+  return slots[index % slots.length];
 }
 export function travelPath(from, to, changedSpace) {
   // A central garden gate keeps cross-space travel out of the walls/desks.

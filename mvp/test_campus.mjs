@@ -6,6 +6,7 @@ for(const space of ['classroom','playground']) {
   const positions=Array.from({length:RENDER_LIMIT},(_,i)=>spot(space,i));
   assert.equal(new Set(positions.map(p=>`${p.x},${p.z}`)).size,RENDER_LIMIT);
   for(const p of positions)assert.ok(space==='classroom'?p.x>0:p.x<0);
+  if(space==='playground')for(const p of positions)assert.ok(Math.hypot(p.x+11,p.z-3.4)>1.65,'agent slot must clear the fountain');
 }
 const from=spot('playground',0),to=spot('classroom',0),path=travelPath(from,to,true);
 assert.deepEqual(walkPoint(path,0),from);

@@ -80,3 +80,15 @@ Review checklist:
 5. Measure GPU/draw-call budgets, batch/instance scenery, LOD and adaptive quality before expanding animated crowds.
 
 References for implementation: [Three.js installation](https://threejs.org/manual/pages/installation.html), [color management](https://threejs.org/manual/pages/color-management.html), [shadows](https://threejs.org/manual/pages/shadows.html). The artistic choices above are project decisions, not claims derived from those manuals.
+
+## Approved-style setting expansion — Tj, 2026-09-27
+
+Tj approved the soft/plush starting style. Preserve it while enriching the setting:
+
+- Garden equipment: roofed slide with curved chute and rails, a slowly spinning merry-go-round, and an overhead monkey-bar ladder. Keep their matte mint/lilac/peach palette rather than switching to harsh primary-color plastic.
+- The fountain moves into a reserved corner; deterministic social-agent slots exclude its footprint. Equipment lives in the rear play area, leaving the front travel route and social lawn clear.
+- Study hall direction: a modern creative campus commons, inspired by the airy/art-filled qualities of a Google campus, without branding or claims of affiliation. Glass side panels, warm wood skylight slats, original geometric mural, greenery, connected worktables and a lounge lane keep the room welcoming while retaining notebooks, study seats and small-group work.
+- Carousel rotation is explicitly decorative. It stops for OS reduced motion and the Still scene control; it never implies agent participation or model activity. Equipment interaction/agent play actions are a later protocol-backed feature.
+- Keep the familiar characters and existing state-driven travel/work/review behavior. More props must not turn the campus into visual clutter or obscure real agents.
+
+This expansion is tracked in #13 and follows the 3D foundation in #12. Chrome screenshots plus carousel/reduced-motion and reserved-slot checks are part of the review gate. No room/accounting or task semantics change.
