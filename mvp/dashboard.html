@@ -149,6 +149,15 @@
 <script src="/assets/room-ui.js"></script>
 <script>
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function updateMarkup(id, html) {
+  const element=document.getElementById(id);
+  if(element.innerHTML===html)return;
+  const active=document.activeElement, focus=active && element.contains?.(active) ? active.id : null;
+  const selections=[...(element.querySelectorAll?.('select') || [])].map(x=>[x.id,x.value]);
+  element.innerHTML=html;
+  for(const [sid,value] of selections){const select=document.getElementById(sid);if(select && [...select.options].some(o=>o.value===value))select.value=value;}
+  if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+}
 function avatarHtml(a, size) {
   const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#7c6cf0';
   const border = `border-color:${color};background:${color}22`;
@@ -206,7 +215,7 @@ async function refresh() {
       doneFlash.set(t.agent_id, now);
   });
   document.getElementById('agentcap').textContent = `(${agents.length}/64 registered · up to ${s.policy?.classroom_agents_per_goal || 4} per Study Hall goal)`;
-  document.getElementById('agents').innerHTML = agents.map(a => {
+  updateMarkup('agents', agents.map(a => {
     const rep = s.reputation && s.reputation[a.id];
     const repBits = rep ? Object.entries(rep).map(([k, v]) => `${escapeHtml(k)} ${Number(v.mean || 0).toFixed(2)}`).join(' · ') : '';
     return `
@@ -216,9 +225,9 @@ async function refresh() {
       <div class="taskline">💰 ${Number(a.credits || 0).toFixed(2)} credits · ${escapeHtml(a.model || 'unknown model')}</div>
       <div class="taskline">${a.current_task && s.tasks[a.current_task] ? '⚙️ ' + escapeHtml(s.tasks[a.current_task].title) : 'standing by…'}</div>
       ${repBits ? `<div class="rep">reputation: ${repBits}</div>` : ''}</div>
-    </div>`; }).join('') || '<p style="color:var(--dim)">No agents yet.</p>';
+    </div>`; }).join('') || '<p style="color:var(--dim)">No companions here yet. Connect an agent to bring this space to life.</p>');
   const cols = [['open','Open'],['needs_input','Needs input ⚠️'],['claimed','In progress'],['pending_verification','Needs review 👀'],['done','Done ✅'],['cancelled','Cancelled']];
-  document.getElementById('board').innerHTML = cols.map(([key,label]) => `
+  updateMarkup('board', cols.map(([key,label]) => `
     <div class="col"><h3>${label}</h3>${!tasks.some(t=>t.status===key)?'<p class="empty-state">Nothing here yet.</p>':''}${tasks.filter(t=>t.status===key).map(t => {
       const topo = t.topology && t.topology !== 'solo'
         ? `<span class="badge ${key === 'needs_input' ? 'needs' : 'team'}">${escapeHtml(t.topology)}</span>` : '';
@@ -233,7 +242,7 @@ async function refresh() {
         <small>💰 ${Number(t.bounty || 0)} · effort ${Number(t.effort || 3)}${t.agent_id && s.agents[t.agent_id] ? ' · ' + escapeHtml(s.agents[t.agent_id].name) : ''}${t.result ? ' — ' + escapeHtml(t.result) : ''}</small>
         ${prog}${ver}${settle}
         ${key==='pending_verification' && !window.PLAYGROUNDS_SNAPSHOT ? `<div class="row"><label>Reviewer <select id="reviewer-${t.id}"><option value="">Choose reviewer</option>${agents.filter(a => (!scope.id || a.id===RoomUI.current?.caller_agent_id) && a.id !== t.agent_id && !(t.artifact_ids || []).some(id => s.artifacts[id]?.agent_id === a.id)).map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}</select></label><button class="approve" onclick="verify('${t.id}',true)">Approve</button><button class="reject" onclick="verify('${t.id}',false)">Reject</button></div>` : ''}
-      </div>`; }).join('')}</div>`).join('');
+      </div>`; }).join('')}</div>`).join(''));
   const log = (s.events || []).slice(-25).reverse();
   document.getElementById('log').innerHTML = log.map(e => `<div><b>#${e.seq}</b> ${escapeHtml(e.type)} — ${escapeHtml(JSON.stringify(e.data)).slice(0,140)}</div>`).join('');
   const g = gl ? gl.id : null;
@@ -249,7 +258,7 @@ async function refresh() {
     }).join('');
     if (items) msgHtml = items;
   }
-  document.getElementById('msgs').innerHTML = msgHtml;
+  updateMarkup('msgs',msgHtml);
   } catch(e) { if(RoomUI.isCurrent(scope) && e.name!=='AbortError') {clearScope(); document.getElementById('connection').textContent = e.message;} }
   finally { refreshing = false; if(refreshAgain){refreshAgain=false;refresh();} }
 }
@@ -299,7 +308,7 @@ function renderWorld(world, state) {
 
 function clearScope() {
   doneFlash.clear();
-  for(const id of ['agents','board','msgs','log','ledgerLine','goalTitle','socialFeed','goalSelect']) document.getElementById(id).replaceChildren();
+  for(const id of ['agents','board','msgs','log','ledgerLine','goalTitle','socialFeed','goalSelect','memberList','roomActions']) document.getElementById(id).replaceChildren();
   renderWorld({agents:[],social_messages:[]},{goals:{}});
 }
 RoomUI.start((switched=true)=>{if(switched)clearScope();refresh();});
