@@ -1338,7 +1338,7 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/assets/ui.css":
             with open(os.path.join(ROOT, "assets/ui.css"), "rb") as f:
                 self._send(200, f.read(), "text/css; charset=utf-8")
-        elif parsed.path in ("/assets/room-ui.js", "/assets/campus.js", "/assets/campus-layout.js",
+        elif parsed.path in ("/assets/invites.js", "/assets/room-ui.js", "/assets/campus.js", "/assets/campus-layout.js",
                              "/assets/campus-navigation.js", "/assets/campus-interactions.js",
                              "/assets/campus-animation.js", "/assets/vendor/three-pathfinding.module.js",
                              "/assets/vendor/three.module.js", "/assets/vendor/three.core.js"):

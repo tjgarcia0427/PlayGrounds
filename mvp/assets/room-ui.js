@@ -27,7 +27,7 @@
   function openDialog(title, content, submit, label='Continue') {
     text('dialogTitle',title); $('dialogContent').replaceChildren(content);
     const form=$('roomForm'), button=$('dialogSubmit');
-    text('dialogError',''); button.textContent=label; button.disabled=false; button.hidden=!submit;
+    text('dialogError',''); button.classList.remove('danger'); button.textContent=label; button.disabled=false; button.hidden=!submit;
     form.onsubmit=async e=>{e.preventDefault(); if(!form.reportValidity()) return; button.disabled=true; $('dialogCancel').disabled=true; form.setAttribute('aria-busy','true');
       try { await submit(); } catch(error) {text('dialogError',safeError(error)); $('dialogError').focus();}
       finally {button.disabled=false; $('dialogCancel').disabled=false; form.removeAttribute('aria-busy');}
@@ -104,6 +104,7 @@
       meta.textContent=`${member.role} · ${agent ? (Date.now()/1000-agent.last_heartbeat>90?'offline':agent.presence.activity.replaceAll('_',' ')) : 'not present'}`;
       item.append(name,meta);$('memberList').append(item);
     }
+    dispatchEvent(new CustomEvent('playgrounds-members-rendered'));
   }
   async function updateMetadata(s) {
     if(!s.id)return;
@@ -130,6 +131,6 @@
   $('dialogCancel').onclick=closeDialog;
   $('roomDialog').addEventListener('cancel',e=>{if($('roomForm').getAttribute('aria-busy')==='true')e.preventDefault();});
   $('roomDialog').addEventListener('close',()=>{$('dialogContent').replaceChildren();$('roomForm').onsubmit=null;});
-  window.RoomUI={scope,isCurrent,request,post,renderMembers,updateMetadata,get current(){return current},openDialog,fields,secretOnce,closeDialog,loadDirectory,switchTo,
+  window.RoomUI={scope,isCurrent,request,post,renderMembers,updateMetadata,get current(){return current},forgetCurrent(){if(current)sessions.delete(current.id);switchTo(null);},openDialog,fields,secretOnce,closeDialog,loadDirectory,switchTo,
     start(callback){change=callback;loadDirectory().catch(e=>text('directoryStatus',safeError(e)));startStream();}};
 })();
