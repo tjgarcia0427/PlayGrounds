@@ -928,6 +928,10 @@ def marginal_shares(task, artifact_scores):
 def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None,
                 quality=0.5, confidence=0.5, rubric=None, checks=None,
                 artifact_scores=None, idempotency_key=None):
+    # An absent identity must never become an implicit human approval,
+    # including replays from older persisted idempotency records.
+    if not isinstance(verifier_agent_id, str) or not verifier_agent_id.strip():
+        return {"error": "explicit verifier_agent_id required; human review is unavailable", "code": 400}
     dup = check_idempotency(idempotency_key) if idempotency_key else None
     if dup:
         return dup
@@ -974,8 +978,7 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
         if blocking_failed:
             approved = False
 
-        verifier = ({"type": "agent", "id": verifier_agent_id}
-                    if verifier_agent_id else {"type": "human", "id": "human"})
+        verifier = {"type": "agent", "id": verifier_agent_id}
 
         receipt = {
             "verification_id": new_id("ver"),

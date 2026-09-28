@@ -19,12 +19,12 @@ class Accounting(unittest.TestCase):
         srv.state['goals']['goal_1']['budget_available'] = round(1000-amount, 2)
         return mk_task(status='pending_verification', agent_id='a', escrow=amount, bounty=amount, result='done')
 
-    def test_human_review_conserves_budget(self):
+    def test_independent_review_conserves_budget(self):
         self.pending()
-        r=srv.verify_task('task_1', True)
+        r=srv.verify_task('task_1', True, verifier_agent_id='r')
         g=srv.state['goals']['goal_1']
         self.assertEqual(g['budget_available']+g['budget_spent'], 1000)
-        self.assertEqual(g['budget_spent'], 90)
+        self.assertEqual(g['budget_spent'], 100)
 
     def test_fractional_split_conserves_cents(self):
         t=self.pending(.05)
@@ -48,13 +48,13 @@ class Accounting(unittest.TestCase):
 
     def test_legacy_cannot_bypass_integrity(self):
         t=self.pending();t['result']=''
-        r=srv.verify_task('task_1',True,approved_credits=100)
+        r=srv.verify_task('task_1',True,approved_credits=100,verifier_agent_id='r')
         self.assertEqual(r['task']['status'],'open')
         self.assertEqual(srv.state['agents']['a']['credits'],0)
 
     def test_receipt_hash_covers_final_shares(self):
         self.pending()
-        receipt=dict(srv.verify_task('task_1',True)['verification_receipt'])
+        receipt=dict(srv.verify_task('task_1',True,verifier_agent_id='r')['verification_receipt'])
         sig=receipt.pop('signature')
         self.assertEqual(sig,'stub:'+hashlib.sha256((json.dumps(receipt,sort_keys=True)+srv.state['server_salt']).encode()).hexdigest()[:32])
 

@@ -227,7 +227,8 @@ class Unit(unittest.TestCase):
                     escrow=30, result="done", claimed_at=srv.utcnow() - 10,
                     completed_at=srv.utcnow())
         srv.state["goals"]["goal_1"]["budget_available"] = 970
-        res = srv.verify_task("task_1", True, approved_credits=30)
+        mk_agent("reviewer")
+        res = srv.verify_task("task_1", True, approved_credits=30, verifier_agent_id="reviewer")
         self.assertNotIn("error", res)
         self.assertEqual(srv.state["agents"]["agent_1"]["credits"], 30)
         self.assertEqual(res["task"]["status"], "done")
@@ -271,7 +272,8 @@ class Unit(unittest.TestCase):
         mk_task(bounty=40, status="pending_verification", agent_id="agent_1",
                 escrow=40, result="bad")
         srv.state["goals"]["goal_1"]["budget_available"] = 960
-        res = srv.verify_task("task_1", False, quality=0.2, confidence=0.9)
+        mk_agent("reviewer")
+        res = srv.verify_task("task_1", False, quality=0.2, confidence=0.9, verifier_agent_id="reviewer")
         self.assertEqual(res["task"]["status"], "open")
         self.assertEqual(srv.state["goals"]["goal_1"]["budget_available"], 1000)
         self.assertEqual(srv.state["agents"]["agent_1"]["credits"], 0)
