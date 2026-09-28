@@ -135,7 +135,7 @@ function buildCampus() {
   box('#e6c8a5',[4.6,1.14,7],[3.5,.12,.95]);
   box('#77788b',[5.4,1.48,7],[.7,.6,.55]);
   box('#e0d7d1',[5.4,1.48,7.3],[.52,.35,.05]);
-  for(const x of [3.4,3.75,4.1])disc('#f8edd9',[x,1.3,7],[.12,.2,.12]);
+  for(const x of [3.4,3.75,4.1,6.1])disc('#f8edd9',[x,1.3,7],[.12,.2,.12]);
   label('COFFEE & IDEAS',4.5,1.9,7,2.6);
   // Compact lounge lane stays outside every agent seat/aisle.
   box('#abbcc9',[11.65,.4,1.4],[1.25,.7,2.5]);
@@ -296,7 +296,15 @@ function buildCampus() {
   document.getElementById('cameraRight').addEventListener('click',()=>{orbit+=.16});
   function setRoom(next) {
     if(room===next)return;
-    room=next;focus=room==='classroom'?6.8:room==='playground'?-6.8:0;resize();
+    room=next;focus=room==='classroom'?6.8:room==='playground'?-6.8:0;
+    document.getElementById('classTab').setAttribute('aria-pressed',String(room==='classroom'));
+    document.getElementById('playTab').setAttribute('aria-pressed',String(room==='playground'));
+    if(room!=='campus') {
+      document.getElementById('classroomPanels').hidden=room!=='classroom';
+      document.getElementById('socialSection').hidden=room!=='playground';
+      fallback.dataset.focus=room;
+    }
+    resize();
   }
   follow.addEventListener('change',()=>{const a=actors.get(follow.value);if(a)setRoom(a.space)});
   document.getElementById('cameraHome').addEventListener('click',()=>{follow.value='';orbit=.3;zoom=1;setRoom('campus');document.getElementById('cameraZoom').value='1'});
@@ -347,7 +355,7 @@ function buildCampus() {
       const interaction=interactions.get(a.agent.id);
       if(interaction&&!a.path){
         const p=interaction.position,dx=p.x-a.root.position.x,dz=p.z-a.root.position.z;
-        if(Math.hypot(dx,dz)>.002)a.root.rotation.y=THREE.MathUtils.lerp(a.root.rotation.y,Math.atan2(dx,dz),.25);
+        if(Math.hypot(dx,dz)>.002)a.root.rotation.y+=Math.atan2(Math.sin(Math.atan2(dx,dz)-a.root.rotation.y),Math.cos(Math.atan2(dx,dz)-a.root.rotation.y))*.25;
         a.root.position.set(p.x,p.y||0,p.z);walking=interaction.pose==='walk';
         if(interaction.angle!==undefined)a.root.rotation.y=interaction.angle;
         if(interaction.kind==='coffee'&&!walking)a.root.rotation.y=0;

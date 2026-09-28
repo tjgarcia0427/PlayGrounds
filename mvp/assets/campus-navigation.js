@@ -4,7 +4,7 @@ import {spot,RENDER_LIMIT} from './campus-layout.js';
 
 // Scene dimensions are shared with rendering; all desks reserve space even when hidden.
 export const DESK={width:1.4,depth:.5,offset:-.72};
-export const COFFEE={x:4.6,z:6.05};
+export const COFFEE={x:6.8,z:6.05};
 export const CAROUSEL_ENTRY={x:-6.4,z:-.45};
 export const RADIUS=.34;
 export function obstacles() {

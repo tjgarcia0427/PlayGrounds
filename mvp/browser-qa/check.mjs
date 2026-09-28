@@ -63,6 +63,15 @@ try {
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).carousel>=1,null,{timeout:90000});
   assert.deepEqual(presence(await api('/api/world')),beforeAmbient,'ambient interaction must not change agent work state');
   assert.deepEqual(await api('/api/ledger'),beforeLedger,'ambient interaction must not create ledger entries');
+  // A real presence change interrupts a second ride request and releases its lease.
+  await page.click('#tryInteraction');
+  await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id),agents[4].id);
+  const nextGoal=await api('/api/goals',{title:'Interrupt interaction (QA)',budget:20});
+  const interruptTask=await api(`/api/goals/${nextGoal.id}/tasks`,{title:'Real work wins over decoration',bounty:5});
+  await api(`/api/tasks/${interruptTask.id}/claim`,{agent_id:agents[4].id});
+  await page.waitForFunction(id=>!JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id),agents[4].id);
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom'&&document.getElementById('campus3d').dataset.moving==='0',null,{timeout:90000});
+  assert.equal(await page.locator('#classTab').getAttribute('aria-pressed'),'true');
   const beforeCamera=await api('/api/world');
   await page.click('#classTab');await page.click('#cameraRight');
   await page.locator('#cameraZoom').fill('1.2');
