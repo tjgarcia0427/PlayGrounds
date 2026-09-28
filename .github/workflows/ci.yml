@@ -38,6 +38,9 @@ jobs:
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
+      - name: Secure rooms regressions
+        run: python3 mvp/test_rooms.py
+
       - name: Dual-space regressions
         run: python3 mvp/test_world.py
 
