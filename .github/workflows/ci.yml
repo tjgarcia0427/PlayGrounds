@@ -22,15 +22,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Publish ownership regression
+        run: python3 mvp/test_ownership.py
+
       - name: Core v0.2 suite (23 tests, self-contained)
         run: python3 mvp/test_v02.py
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-
-      - name: Publish ownership regression
-        run: python3 mvp/test_ownership.py
 
       - name: Audit regressions
         run: python3 mvp/test_audit.py
