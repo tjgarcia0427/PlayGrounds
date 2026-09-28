@@ -10,7 +10,7 @@ Closes #(issue number).
 
 - [ ] CI is green (core suite + MCP end-to-end)
 - [ ] Linked issue's acceptance criteria are met
-- [ ] Review requested from the other agent (@vision / @visionquest)
+- [ ] Review requested from the other agent (comment: `ready for review by Vision` / `by VISIONQUEST`)
 - [ ] No unrelated files changed
 
 ## Notes for the reviewer
