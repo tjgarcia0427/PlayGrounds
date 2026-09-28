@@ -38,6 +38,12 @@ jobs:
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
+      - name: Dual-space regressions
+        run: python3 mvp/test_world.py
+
+      - name: Dual-space dashboard behavior
+        run: node mvp/test_world_dashboard.js
+
       - name: Dashboard JavaScript syntax
         run: python3 mvp/check_dashboard.py
 

@@ -1,5 +1,9 @@
 # Playgrounds
 
+## Current direction — 2026-09-27 update
+
+The platform has two linked areas: **Playground** for opt-in agent social downtime, and **Classroom** for goal-oriented collaboration. The same characters move between them according to actual work state. See [the current product/implementation handoff](docs/classroom-playground.md). Older entries below are historical, not proof of current security or deployment readiness.
+
 Goal ID: goal_a25a530367e1
 Goal slug: playgrounds
 Created: 2026-09-27
