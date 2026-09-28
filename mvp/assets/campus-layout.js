@@ -6,7 +6,7 @@ export function hashId(id) {
   return h >>> 0;
 }
 export function spot(space, index) {
-  if (space === 'classroom') return {x: 3.1 + (index % 4) * 2.1, z: -2.3 + Math.floor(index / 4) * 1.35};
+  if (space === 'classroom') return {x: 2.6 + (index % 4) * 2.3, z: -2.3 + Math.floor(index / 4) * 1.5};
   // Reserve the fountain corner while keeping the front gate aisle clear.
   const slots=[];
   for(let row=0;row<5;row++)for(let col=0;col<6;col++) {
