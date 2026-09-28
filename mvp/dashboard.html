@@ -136,6 +136,18 @@
   <section><h2>Live event log</h2><div id="log"></div></section>
 </div></main>
 <script>
+// Public deployments: when the page is opened with ?token=<operator token>,
+// propagate it to API fetches so the gated dashboard keeps working.
+const _opToken = new URLSearchParams(location.search).get('token');
+if (_opToken) {
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (url, opts) => {
+    if (typeof url === 'string' && url.startsWith('/api/')) {
+      url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_opToken);
+    }
+    return _fetch(url, opts);
+  };
+}
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function avatarHtml(a, size) {
   const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#7c6cf0';
@@ -292,7 +304,7 @@ function renderWorld(world, state) {
 }
 
 refresh();
-const es = new EventSource('/api/events?since=0');
+const es = new EventSource('/api/events?since=0' + (_opToken ? '&token=' + encodeURIComponent(_opToken) : ''));
 es.onmessage = () => refresh();
 es.onerror = () => { document.getElementById("connection").textContent = "RECONNECTING — last known presence shown"; };
 setInterval(refresh, 10000);

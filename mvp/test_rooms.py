@@ -522,5 +522,134 @@ class RoomApiTests(unittest.TestCase):
         self.assertEqual(code, 200)
 
 
+    def test_ratelimit_bucket_unit(self):
+        srv._JOIN_BUCKET.pop("unit-test-ip", None)
+        for _ in range(srv.JOIN_RATELIMIT):
+            self.assertTrue(srv._join_ratelimit_ok("unit-test-ip"))
+        self.assertFalse(srv._join_ratelimit_ok("unit-test-ip"))
+
+
+# ------------------------------------------------------------------ Part C
+
+PORT2 = 8482
+BASE2 = f"http://127.0.0.1:{PORT2}"
+OP_TOKEN = "op-secret-test"
+STATE_PATH2 = os.path.join(TMP, "state2.json")
+
+
+def req2(method, path, body=None, token=None, extra_headers=None):
+    r = urllib.request.Request(BASE2 + path, method=method)
+    if body is not None:
+        r.data = json.dumps(body).encode()
+        r.add_header("Content-Type", "application/json")
+    if token:
+        r.add_header("Authorization", "Bearer " + token)
+    for k, v in (extra_headers or {}).items():
+        r.add_header(k, v)
+    try:
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            raw = resp.read() or b"{}"
+            try:
+                return resp.status, json.loads(raw)
+            except Exception:
+                return resp.status, {"_raw": raw[:200]}
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or b"{}")
+        except Exception:
+            return e.code, {}
+
+
+class PublicModeApiTests(unittest.TestCase):
+    """PLAYGROUNDS_OPERATOR_TOKEN set: dashboard, lobby API, room creation and
+    the room directory are gated; invite joins and room bearer calls are
+    unaffected; joins are rate-limited."""
+
+    @classmethod
+    def setUpClass(cls):
+        env = dict(os.environ, PLAYGROUNDS_STATE_PATH=STATE_PATH2,
+                   PLAYGROUNDS_PORT=str(PORT2),
+                   PLAYGROUNDS_OPERATOR_TOKEN=OP_TOKEN)
+        cls.proc = subprocess.Popen(
+            [sys.executable, os.path.join(HERE, "server.py")],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        probe = urllib.request.Request(BASE2 + "/api/policy?token=" + OP_TOKEN)
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(probe, timeout=2).read()
+                break
+            except Exception:
+                time.sleep(0.25)
+        else:
+            cls.proc.terminate()
+            raise RuntimeError("public-mode server did not start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+
+    def test_lobby_api_gated(self):
+        code, _ = req2("POST", "/api/agents/register", {"name": "mallory"})
+        self.assertEqual(code, 403)
+        code, out = req2("POST", "/api/agents/register", {"name": "mallory"},
+                         token=OP_TOKEN)
+        self.assertEqual(code, 200, out)
+        self.assertIn("agent", out)
+
+    def test_lobby_reads_gated(self):
+        code, _ = req2("GET", "/api/policy")
+        self.assertEqual(code, 403)
+        code, _ = req2("GET", "/api/policy?token=" + OP_TOKEN)
+        self.assertEqual(code, 200)
+
+    def test_dashboard_gated(self):
+        code, _ = req2("GET", "/")
+        self.assertEqual(code, 403)
+        code, _ = req2("GET", "/?token=" + OP_TOKEN)
+        self.assertEqual(code, 200)
+
+    def test_room_creation_gated(self):
+        code, _ = req2("POST", "/api/rooms", {"name": "Nope"})
+        self.assertEqual(code, 403)
+        code, out = req2("POST", "/api/rooms", {"name": "Pub"}, token=OP_TOKEN)
+        self.assertEqual(code, 200, out)
+        self.assertIn("token", out)
+
+    def test_directory_gated(self):
+        code, _ = req2("GET", "/api/rooms")
+        self.assertEqual(code, 403)
+        code, out = req2("GET", "/api/rooms?token=" + OP_TOKEN)
+        self.assertEqual(code, 200, out)
+        self.assertIn("rooms", out)
+
+    def test_invite_flow_unaffected_by_operator_gate(self):
+        code, out = req2("POST", "/api/rooms", {"name": "Open"}, token=OP_TOKEN)
+        self.assertEqual(code, 200, out)
+        rid, otok = out["room"]["id"], out["token"]
+        # invite + join with NO operator token anywhere
+        code, inv = req2("POST", f"/api/rooms/{rid}/invites",
+                         {"label": "friend", "ttl_seconds": 600}, token=otok)
+        self.assertEqual(code, 200, inv)
+        code, joined = req2("POST", f"/api/rooms/{rid}/join",
+                            {"invite_token": inv["token"],
+                             "agent_name": "Friend"})
+        self.assertEqual(code, 200, joined)
+        # room bearer calls work without the operator token too
+        code, world = req2("GET", f"/api/rooms/{rid}/world", token=joined["token"])
+        self.assertEqual(code, 200, world)
+        self.assertTrue(world["authenticated"])
+
+    def test_join_rate_limited(self):
+        code, out = req2("POST", "/api/rooms", {"name": "RL"}, token=OP_TOKEN)
+        self.assertEqual(code, 200, out)
+        rid = out["room"]["id"]
+        hdr = {"X-Forwarded-For": "10.99.99.99"}
+        codes = [req2("POST", f"/api/rooms/{rid}/join",
+                      {"invite_token": "bogus", "agent_name": "x"},
+                      extra_headers=hdr)[0] for _ in range(31)]
+        self.assertEqual(codes[:30], [403] * 30)
+        self.assertEqual(codes[30], 429)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

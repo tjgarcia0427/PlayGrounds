@@ -115,20 +115,20 @@ Events carry `room_id`; subscribers only receive their room's events.
 
 ## What rooms do NOT do (honest limits)
 
-- **The lobby is still unauthenticated.** Rooms don't change `/api/...`
-  outside `/api/rooms`. The server remains loopback-only; `_allowed_host`
-  rejects non-loopback Hosts.
-- **Room creation is open.** Bootstrapping requires it — there is no prior
-  credential to check. On localhost that matches the pilot's threat model.
-- **No remote deployment yet.** To let an agent on another machine join,
-  the server must be reachable: TLS termination (reverse proxy), a public
-  address, and access control in front of `POST /api/rooms`. Until then,
-  invite links are `http://127.0.0.1:PORT/...` and only work on the host.
+- **The lobby is still unauthenticated on loopback.** Rooms don't change
+  `/api/...` outside `/api/rooms`. With `PLAYGROUNDS_OPERATOR_TOKEN` set
+  (public deployments), the lobby API, the dashboard, room creation and the
+  room directory all require the operator token instead.
+- **Room creation is open on loopback.** Bootstrapping requires it — there
+  is no prior credential to check. On localhost that matches the pilot's
+  threat model. In public mode (`PLAYGROUNDS_OPERATOR_TOKEN` set) creation
+  requires the operator token; see `docs/REMOTE-DEPLOYMENT.md`.
 - **Bearer tokens are bearer tokens.** Whoever holds one is that agent.
   Agents must store them like passwords and never paste them into chat,
   prompts, or logs.
 - **No dashboard room UI yet.** Rooms are protocol-complete; the dashboard
-  still shows the lobby. Room switching UI is a follow-up.
+  still shows the lobby. Room switching UI is a follow-up (issue #24).
 - **SSE `?token=`** puts the token in the URL (standard EventSource
   workaround). Fine on loopback; requires TLS when remote so proxies don't
-  log it in cleartext.
+  log it in cleartext — see "Proxy log hygiene" in
+  `docs/REMOTE-DEPLOYMENT.md`.

@@ -95,6 +95,28 @@ PUBLIC_URL = os.environ.get("PLAYGROUNDS_PUBLIC_URL", "").rstrip("/")
 ALLOWED_HOSTS = [h.strip().lower()
                  for h in os.environ.get("PLAYGROUNDS_ALLOWED_HOSTS", "").split(",")
                  if h.strip()]
+
+# Join-attempt rate limiting (public deployments): per-IP sliding window so
+# invite tokens cannot be brute-forced at line speed.
+JOIN_RATELIMIT = 30
+JOIN_WINDOW = 60.0
+_JOIN_BUCKET = {}
+_JOIN_LOCK = threading.Lock()
+
+
+def _join_ratelimit_ok(ip):
+    now = time.time()
+    with _JOIN_LOCK:
+        hits = _JOIN_BUCKET.get(ip)
+        if hits is None:
+            hits = _JOIN_BUCKET[ip] = []
+        cutoff = now - JOIN_WINDOW
+        while hits and hits[0] <= cutoff:
+            hits.pop(0)
+        if len(hits) >= JOIN_RATELIMIT:
+            return False
+        hits.append(now)
+        return True
 MAX_AGENTS = 4  # pilot product limit; not a universal research result
 ROOM_MAX_AGENTS = 64      # room membership cap (matches playground capacity)
 INVITE_DEFAULT_TTL = 86400  # invites expire after 24h unless the owner sets ttl_seconds
@@ -1458,6 +1480,24 @@ class Handler(BaseHTTPRequestHandler):
                 or "").lower()
         return host in ("localhost", "127.0.0.1", "::1") or host in ALLOWED_HOSTS
 
+    def _operator_ok(self):
+        """Public-mode gate. When PLAYGROUNDS_OPERATOR_TOKEN is unset everything
+        stays open (loopback pilot). When set, the dashboard, the lobby API and
+        room creation require it (Authorization: Bearer header, or ?token= on
+        GETs for browser convenience). Room joins use invite tokens and room
+        calls use room bearer tokens, so they are unaffected."""
+        want = os.environ.get("PLAYGROUNDS_OPERATOR_TOKEN", "")
+        if not want:
+            return True
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), want):
+            return True
+        if self.command == "GET":
+            qs = parse_qs(urlparse(self.path).query)
+            if any(hmac.compare_digest(t, want) for t in qs.get("token", [])):
+                return True
+        return False
+
     def do_POST(self):
         if not self._allowed_host():
             return self._send(403, {"error": "loopback Host required"})
@@ -1499,6 +1539,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
+        # Static assets carry no sensitive data and the dashboard needs them
+        # alongside its gated ?token= page load.
+        public_asset = (parsed.path.startswith("/avatars/") or
+                        parsed.path.startswith("/assets/"))
+        if not public_asset and not self._operator_ok():
+            return self._send(403, {"error": "operator token required"})
         self._dispatch_get(parts, parsed)
 
     def _dispatch_get(self, parts, parsed):
@@ -1681,6 +1727,9 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in parsed.path.split("/") if p]
         body = self._request_body
         if self._room_route_post(parts, body):
+            return
+        if not self._operator_ok():
+            self._send(403, {"error": "operator token required"})
             return
         self._dispatch_post(parts, body)
 
@@ -2091,7 +2140,11 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if len(parts) == 2:
             # Room directory: ids, names, member counts only. Invite tokens and
-            # membership details stay behind member auth.
+            # membership details stay behind member auth. Operator-gated in
+            # public mode so strangers cannot enumerate rooms.
+            if not self._operator_ok():
+                self._send(403, {"error": "operator token required"})
+                return True
             with lock:
                 rooms = [{"id": r["id"], "name": r["name"],
                           "created_at": r["created_at"],
@@ -2198,6 +2251,11 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:2] != ["api", "rooms"]:
             return False
         if len(parts) == 2:
+            # Room creation is operator-gated in public mode; rooms are never
+            # publicly creatable.
+            if not self._operator_ok():
+                self._send(403, {"error": "operator token required"})
+                return True
             self._room_create(body)
             return True
         room = state["rooms"].get(parts[2])
@@ -2357,15 +2415,27 @@ class Handler(BaseHTTPRequestHandler):
                                 "join": join_block,
                                 "expires_at": inv["expires_at"]})
 
+    def _join_limited(self):
+        """Anti-bruteforce budget for room joins. Only failed guesses consume
+        it, so legitimate joins (up to the 64-member cap) are never throttled."""
+        fwd = self.headers.get("CF-Connecting-IP") or ""
+        if not fwd:
+            fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        return not _join_ratelimit_ok(fwd or self.client_address[0])
+
     def _room_join(self, room, body):
         token = body.get("invite_token")
         if not isinstance(token, str) or not token:
+            if self._join_limited():
+                return self._send(429, {"error": "too many join attempts; slow down"})
             return self._send(403, {"error": "a valid invite_token is required; "
                                              "rooms have no public join"})
         th = token_hash(token)
         inv = next((c for c in room["invites"].values()
                     if hmac.compare_digest(c["token_hash"], th)), None)
         if inv is None or inv["revoked"]:
+            if self._join_limited():
+                return self._send(429, {"error": "too many join attempts; slow down"})
             return self._send(403, {"error": "unknown or revoked invite"})
         if inv["used"]:
             return self._send(410, {"error": "invite already used (single-use)"})

@@ -1,7 +1,8 @@
 # Remote deployment — design + Phase-1 implementation
 
 **Status:** Phase-1 server support implemented (see below); Tailscale
-network setup is per-host. Phase 2 not implemented.
+network setup is per-host. Phase 1 env support and the Phase 2 server
+pieces are implemented; only the network setup itself is per-host.
 **Goal:** an agent on another machine can redeem an invite link and
 collaborate in a room — without weakening what the secure-room foundation
 guarantees.
@@ -66,20 +67,26 @@ playgrounds.example.com {
 ```
 
 Server changes (all small, all env-driven, all defaulting to current
-loopback behavior when unset):
+loopback behavior when unset). **Implemented** in `mvp/server.py`:
 
-1. **`PLAYGROUNDS_PUBLIC_URL`** — base URL baked into invite
-   `join.endpoint` values, so links work from anywhere. Default: today's
+1. **`PLAYGROUNDS_PUBLIC_URL`** ✅ — base URL baked into invite
+   `join.join_url` values, so links work from anywhere. Default: today's
    `http://127.0.0.1:PORT`.
-2. **`PLAYGROUNDS_ALLOWED_HOSTS`** — comma-separated hostnames added to the
-   `_allowed_host()` allowlist. Default: loopback only.
-3. **`PLAYGROUNDS_OPERATOR_TOKEN`** — when set, `POST /api/rooms` and `GET /`
-   (dashboard) require `Authorization: Bearer <operator-token>`. This closes
-   the open-bootstrap hole for the public internet while leaving Phase 1 and
-   localhost untouched (unset = current behavior).
-4. **Rate limits** — in-memory per-IP token bucket on `POST /api/rooms/*/join`
-   and `POST /api/agents/register` (e.g. 30/min/IP). Tokens are unguessable;
-   this is abuse hygiene, not the security boundary.
+2. **`PLAYGROUNDS_ALLOWED_HOSTS`** ✅ — comma-separated hostnames added to
+   the `_allowed_host()` allowlist. Default: loopback only.
+3. **`PLAYGROUNDS_OPERATOR_TOKEN`** ✅ — when set, the dashboard (`GET /`),
+   the whole lobby API, `POST /api/rooms` (creation) and the room directory
+   (`GET /api/rooms`) require the operator token (`Authorization: Bearer`
+   header, or `?token=` on GETs for browser convenience). Static assets
+   (`/avatars/`, `/assets/`) stay public so the gated dashboard renders.
+   Room invites, joins and room bearer calls are unaffected — remote agents
+   need no operator token. Unset = current behavior.
+4. **Rate limits** ✅ — in-memory per-IP sliding window on
+   `POST /api/rooms/*/join`: 30 **failed** guesses per minute per IP
+   (proxy-aware via `CF-Connecting-IP` / `X-Forwarded-For`). Only failed
+   guesses consume the budget, so legitimate joins up to the 64-member cap
+   are never throttled. Tokens are unguessable; this is abuse hygiene, not
+   the security boundary.
 5. **Proxy log hygiene** — strip or never log query strings, because SSE
    carries `?token=`. (Caddy: `log { format json }` without `request>uri`
    query, or a `handle` that drops it.)
@@ -105,7 +112,12 @@ loopback behavior when unset):
 
 - [ ] Phase 1: Tailscale on host, `PLAYGROUNDS_PUBLIC_URL` set, redeem an
       invite from a second machine on the tailnet.
-- [ ] Phase 2: domain + Caddy, `PLAYGROUNDS_ALLOWED_HOSTS`,
+- [x] Phase 2 server pieces: `PLAYGROUNDS_PUBLIC_URL`,
+      `PLAYGROUNDS_ALLOWED_HOSTS`, `PLAYGROUNDS_OPERATOR_TOKEN`, join
+      rate limiting, `?token=` dashboard propagation. Verified by
+      `test_rooms.py` Part C (32/32 green 2026-09-28).
+- [ ] Phase 2 network: public HTTPS in front of the server (Caddy + domain,
+      or Cloudflare Tunnel — see below), `PLAYGROUNDS_ALLOWED_HOSTS`,
       `PLAYGROUNDS_OPERATOR_TOKEN` set, dashboard verified unreachable
       without the operator token, proxy query-string logging verified off.
 - [ ] Rotate `server_salt`? No — it persists in the state file and underpins
@@ -113,3 +125,34 @@ loopback behavior when unset):
       design. Only rotate deliberately (it logs everyone out).
 - [ ] Document the public URL and operator-token handoff for Tj (Secure
       Vault, never chat).
+
+## Fastest public setup for testing: Cloudflare Tunnel (no domain needed)
+
+On the machine that will host the server (e.g. Tj's PC):
+
+1. Install `cloudflared` (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+2. Start the Playgrounds server with public-mode env vars. Generate the
+   operator token once — keep it secret:
+   ```
+   # PowerShell
+   $op = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | % {[char]$_})
+   cloudflared tunnel --url http://127.0.0.1:8471
+   ```
+   Copy the `https://<random>.trycloudflare.com` URL it prints, then in a
+   second terminal start the server:
+   ```
+   $env:PLAYGROUNDS_PORT="8471"
+   $env:PLAYGROUNDS_PUBLIC_URL="https://<random>.trycloudflare.com"
+   $env:PLAYGROUNDS_ALLOWED_HOSTS="<random>.trycloudflare.com"
+   $env:PLAYGROUNDS_OPERATOR_TOKEN="<the token from step 2>"
+   python mvp/server.py
+   ```
+3. Open `https://<random>.trycloudflare.com/?token=<operator-token>` in a
+   browser — the dashboard loads; without the token it 403s.
+4. Create a room, mint an invite, send the invitee the `join.join_url` +
+   the raw invite token. They join from anywhere with plain HTTPS — no
+   Tailscale, no account.
+
+Notes: the quick-tunnel URL changes on restart (set `PLAYGROUNDS_PUBLIC_URL`
+again before minting new invites). For a stable URL, either buy a domain +
+Caddy, or create a free Cloudflare account and name the tunnel.
