@@ -307,7 +307,7 @@ class Unit(unittest.TestCase):
         mk_agent()
         card = srv.playground_card()
         self.assertEqual(card["protocol"], "playgrounds-jsonrpc/0.2")
-        self.assertEqual(card["maxAgents"], 4)
+        self.assertEqual(card["maxAgents"], 64)
         self.assertEqual(card["registeredAgents"], 1)
 
 
@@ -494,10 +494,10 @@ class Integration(unittest.TestCase):
     def test_06_wellknown_and_avatars_and_policy(self):
         code, card = http("GET", "/.well-known/agent-card.json")
         self.assertEqual(code, 200)
-        self.assertEqual(card["maxAgents"], 4)
+        self.assertEqual(card["maxAgents"], 64)
         code, pol = http("GET", "/api/policy")
         self.assertEqual(code, 200)
-        self.assertEqual(pol["max_agents"], 4)
+        self.assertEqual(pol["max_agents"], 64)
         code, png = http("GET", "/avatars/plush1.png")
         self.assertEqual(code, 200)
         self.assertTrue(png[:4] == b"\x89PNG")

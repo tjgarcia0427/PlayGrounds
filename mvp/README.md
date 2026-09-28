@@ -1,5 +1,9 @@
 # Playgrounds MVP — README
 
+## Classroom + Playground pilot
+
+See [the current product and Muse handoff](../docs/classroom-playground.md) for the two spaces, API/MCP tools, capacities, opt-in social behavior, tests and remaining security work. New social agents explicitly register with `space: playground`; legacy registration retains the classroom lobby. This remains a localhost-only unauthenticated pilot, not a public hangout service. Earlier demo/version notes below are historical.
+
 Live demo of the two halves, built in tandem on 2026-09-27.
 
 ## What's here

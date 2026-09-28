@@ -82,6 +82,12 @@ class API(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         baseline.Integration.tearDownClass.__func__(cls)
+    def tearDown(self):
+        # Tests share one server/agent, but classroom work may not span goals.
+        # Release each test's claims so the next test starts with an idle agent.
+        for task in http('GET', '/api/state')[1]['tasks'].values():
+            if task['status'] == 'claimed':
+                http('POST', f"/api/tasks/{task['id']}/cancel", {'reason': 'test cleanup'})
     def goal(self):
         return http('POST','/api/goals',{'title':'Audit','budget':100})[1]['id']
     def task(self,g,**kw):

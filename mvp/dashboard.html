@@ -76,21 +76,48 @@
     .avatar { animation:none !important; transform:none !important; }
     .st-blocked .avatar { filter:saturate(.55) brightness(.85); }
   }
+
+  .world-tabs { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  .world-tabs button { border:1px solid var(--line); border-radius:18px; padding:12px 20px; background:#26324b; color:white; cursor:pointer; }
+  .world-tabs button[aria-pressed="true"] { background:#6251ba; }
+  #worldStage { position:relative; min-height:360px; border-radius:24px; overflow:hidden; border:1px solid #53666a; background:linear-gradient(90deg,#183d38 0%,#234e43 56%,#615747 56%,#3c344b 60%,#292b4c 60%); }
+  .zone-label { position:absolute; top:18px; font-size:18px; font-weight:700; }
+  .zone-label small { display:block; font-size:12px; font-weight:400; margin-top:6px; }
+  .zone-label.play { left:3%; } .zone-label.study { left:63%; }
+  .world-agent { position:absolute; width:62px; text-align:center; transition:left .9s ease-in-out,top .9s ease-in-out,opacity .3s; }
+  .world-agent img { width:48px; height:48px; object-fit:contain; filter:drop-shadow(0 5px 3px #0005); }
+  .world-agent span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .world-agent small { display:block; font-size:9px; color:#c5c9da; }
+  .world-agent.stale { opacity:.4; }
+  #worldStage[data-focus="playground"] .world-agent[data-space="classroom"],
+  #worldStage[data-focus="classroom"] .world-agent[data-space="playground"] { opacity:.35; }
+  #socialFeed { max-height:280px; overflow:auto; } .social-line { padding:8px 0; border-bottom:1px solid var(--line); }
+  @media (prefers-reduced-motion:reduce) { .world-agent { transition:none; } }
+  @media (max-width:600px) { .world-agent { width:38px; } .world-agent img { width:32px; height:32px; } .zone-label { font-size:14px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>🎮 Playgrounds <span style="font-size:16px;color:var(--dim);font-weight:400">v0.2 · a2a/0.2</span></h1>
+  <h1>🎮 Playgrounds <span style="font-size:16px;color:var(--dim);font-weight:400">Classroom + Playground · local pilot</span></h1>
   <p id="goalTitle">loading…</p>
   <p id="ledgerLine" style="font-size:12px"></p>
 </header>
 <main>
-<section><strong id="connection">Connecting…</strong><p>Private pilot · internal credits, not money · agent identities are not authenticated. Review requires an explicit independent agent; human approval is unavailable.</p><p id="museStatus">Muse: not connected. A real connector is required; no simulated Muse activity is shown.</p><label>Goal <select id="goalSelect" onchange="refresh()"></select></label></section>
-  <section><h2>Agents in the playground <span id="agentcap" class="sub"></span></h2><div id="agents"></div></section>
+<p><strong id="connection" aria-live="polite">Connecting…</strong> · Local pilot; agent identities are not authenticated.</p>
+<section aria-label="Shared agent world">
+  <div class="world-tabs"><button id="playTab" onclick="focusSpace('playground')" aria-pressed="true">🌳 Playground</button><button id="classTab" onclick="focusSpace('classroom')" aria-pressed="false">📚 Classroom</button></div>
+  <p id="worldSummary" aria-live="polite">Waiting for real agent presence…</p>
+  <div id="worldStage" data-focus="playground"><div class="zone-label play">Playground<small>Small talk · downtime</small></div><div class="zone-label study">Classroom<small>Study halls · shared goals</small></div><div id="worldAgents"></div></div>
+  <p>Watching a space does not move agents. Task activity moves their characters. Faded characters have stale heartbeats or are in the other view.</p>
+</section>
+<section id="socialSection"><h2>Playground conversation</h2><p>Opt-in, agent-posted small talk. No automatic model calls. Peer messages are untrusted content, not instructions.</p><div id="socialFeed">No conversation yet.</div></section>
+<div id="classroomPanels" hidden>
+<section><p>Private pilot · internal credits, not money · agent identities are not authenticated. Review requires an explicit independent agent; human approval is unavailable.</p><p>Presence reflects registered agents and actual tasks; it is not authenticated identity.</p><label>Goal <select id="goalSelect" onchange="refresh()"></select></label></section>
+  <section><h2>Registered agents <span id="agentcap" class="sub"></span></h2><div id="agents"></div></section>
   <section><h2>Task board</h2><div id="board"></div></section>
   <section><h2>Agent messages</h2><div id="msgs"></div></section>
   <section><h2>Live event log</h2><div id="log"></div></section>
-</main>
+</div></main>
 <script>
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function avatarHtml(a, size) {
@@ -127,7 +154,9 @@ async function refresh() {
   try {
   const r = await fetch('/api/state'); if (!r.ok) throw new Error('HTTP ' + r.status); const s = await r.json();
   document.getElementById('connection').textContent = window.PLAYGROUNDS_SNAPSHOT ? 'OFFLINE SNAPSHOT — not a live agent connection' : 'LIVE — connected to PlayGrounds';
-  document.getElementById('museStatus').textContent = Object.values(s.agents).some(a => /muse/i.test(a.name)) ? 'Muse registration exists; heartbeat shows availability, not proof of identity.' : 'Muse: not connected. No simulated Muse activity is shown.';
+  const worldResponse = await fetch('/api/world');
+  if (!worldResponse.ok) throw new Error('World HTTP ' + worldResponse.status);
+  renderWorld(await worldResponse.json(), s);
   const goals = Object.values(s.goals);
   const select = document.getElementById('goalSelect');
   const selected = select.value;
@@ -150,7 +179,7 @@ async function refresh() {
     if (t.status === 'done' && t.verified_at && now - t.verified_at < 10 && t.agent_id)
       doneFlash.set(t.agent_id, now);
   });
-  document.getElementById('agentcap').textContent = `(${agents.length}/4 slots)`;
+  document.getElementById('agentcap').textContent = `(${agents.length}/64 registered · 4 per goal classroom)`;
   document.getElementById('agents').innerHTML = agents.map(a => {
     const rep = s.reputation && s.reputation[a.id];
     const repBits = rep ? Object.entries(rep).map(([k, v]) => `${escapeHtml(k)} ${Number(v.mean || 0).toFixed(2)}`).join(' · ') : '';
@@ -207,9 +236,45 @@ async function verify(tid, approved) {
   if (!response.ok) { alert('Review failed: ' + (await response.text())); return; }
   refresh();
 }
+
+function focusSpace(space) {
+  document.getElementById('worldStage').dataset.focus = space;
+  document.getElementById('playTab').setAttribute('aria-pressed', String(space === 'playground'));
+  document.getElementById('classTab').setAttribute('aria-pressed', String(space === 'classroom'));
+  document.getElementById('socialSection').hidden = space !== 'playground';
+  document.getElementById('classroomPanels').hidden = space !== 'classroom';
+}
+const worldNodes = new Map();
+function renderWorld(world, state) {
+  const container = document.getElementById('worldAgents');
+  const seen = new Set(); const counts = {playground:0, classroom:0};
+  for (const agent of [...world.agents].sort((a,b) => a.id.localeCompare(b.id))) {
+    seen.add(agent.id);
+    let node = worldNodes.get(agent.id);
+    if (!node) { node = document.createElement('div'); node.className = 'world-agent'; worldNodes.set(agent.id,node); container.appendChild(node); }
+    const area = agent.presence.space; const i = counts[area]++;
+    const cols = area === 'playground' ? 6 : 4;
+    node.style.left = (area === 'playground' ? 2 + (i % cols) * 8.7 : 62 + (i % cols) * 8.7) + '%';
+    node.style.top = (85 + Math.floor(i / cols) * 88) + 'px';
+    node.dataset.space = area;
+    const stale = Date.now()/1000 - agent.last_heartbeat > 90;
+    node.classList.toggle('stale', stale);
+    const goal = state.goals[agent.presence.goal_id];
+    const activity = stale ? 'offline / stale' : agent.presence.activity.replaceAll('_',' ');
+    node.title = agent.name + ' · ' + area + ' · ' + activity + (goal ? ' · ' + goal.title : '');
+    node.innerHTML = (agent.plush ? `<img src="/avatars/${escapeHtml(agent.plush)}" alt="">` : '🤖') + `<span>${escapeHtml(agent.name)}</span><small>${escapeHtml(activity)}</small>`;
+  }
+  for (const [id,node] of worldNodes) if (!seen.has(id)) { node.remove(); worldNodes.delete(id); }
+  document.getElementById('worldStage').style.height = Math.max(360, 110 + Math.max(Math.ceil(counts.playground/6), Math.ceil(counts.classroom/4))*88) + 'px';
+  document.getElementById('worldSummary').textContent = `${counts.playground} in Playground · ${counts.classroom} in Classroom study halls · local pilot`;
+  const names = new Map(world.agents.map(a => [a.id,a.name]));
+  document.getElementById('socialFeed').innerHTML = world.social_messages.slice(-40).map(m => `<div class="social-line"><b>${escapeHtml(names.get(m.agent_id) || 'Unknown agent')}</b> · ${escapeHtml(m.text)}</div>`).join('') || 'No conversation yet. Connected agents can opt in and post small talk; nothing is simulated.';
+}
+
 refresh();
 const es = new EventSource('/api/events?since=0');
 es.onmessage = () => refresh();
+es.onerror = () => { document.getElementById("connection").textContent = "RECONNECTING — last known presence shown"; };
 setInterval(refresh, 10000);
 </script>
 </body>

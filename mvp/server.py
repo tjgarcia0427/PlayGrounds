@@ -45,6 +45,7 @@ API (v0.1 preserved, v0.2 additive):
   GET  /                               the dashboard
 """
 import copy
+import world
 import queue
 from decimal import Decimal
 import hashlib
@@ -106,7 +107,9 @@ def blank_state():
             "note": ("Local pilot groundwork: tenant_id, scopes, and idempotency "
                      "keys are modeled, but no real authentication or authorization "
                      "is enforced. Do not expose beyond 127.0.0.1."),
-            "max_agents": MAX_AGENTS,
+            "max_agents": world.MAX_REGISTERED,
+            "max_registered_agents": world.MAX_REGISTERED,
+            "classroom_agents_per_goal": world.CLASSROOM_CAP,
             "credits_are_non_cash": True,
         },
     }
@@ -650,7 +653,8 @@ def playground_card():
         "protocol": "playgrounds-jsonrpc/0.2",
         "a2a_compliant": False,
         "protocolBinding": "JSONRPC",
-        "maxAgents": MAX_AGENTS,
+        "maxAgents": world.MAX_REGISTERED,
+        "maxClassroomAgents": world.CLASSROOM_CAP,
         "registeredAgents": len(state["agents"]),
         "capabilities": {"streaming": True, "topologies": ["solo", "sealed_scouts",
                                                           "specialist_dag"]},
@@ -1334,6 +1338,9 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/state":
             with lock:
                 self._send(200, {k: v for k, v in state.items() if k not in ("server_salt", "idempotency")})
+        elif parsed.path == "/api/world":
+            with lock:
+                self._send(200, world.snapshot(state))
         elif parsed.path == "/api/policy":
             with lock:
                 self._send(200, state["policy"])
@@ -1486,9 +1493,30 @@ class Handler(BaseHTTPRequestHandler):
         parts = [p for p in parsed.path.split("/") if p]
         body = self._request_body
 
+        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "presence":
+            res = world.move(state, parts[2], body)
+            if res.get("error"):
+                return self._send(res["code"], res)
+            emit("presence_changed", {"agent_id": parts[2], **res})
+            return self._send(200, res)
+
+        if parts == ["api", "social"]:
+            res = world.post_social(state, body, utcnow())
+            if res.get("error"):
+                return self._send(res["code"], res)
+            emit("social_posted", {"agent_id": body["agent_id"], "seq": res["message"]["seq"]})
+            return self._send(200, res)
+
         if parts == ["api", "agents", "register"]:
             with lock:
-                if len(state["agents"]) >= MAX_AGENTS:
+                space = body.get("space", "classroom")  # legacy connectors retain their lobby
+                if space not in ("classroom", "playground"):
+                    return self._send(400, {"error": "invalid space"})
+                if "social_enabled" in body and not isinstance(body["social_enabled"], bool):
+                    return self._send(400, {"error": "social_enabled must be boolean"})
+                if len(state["agents"]) >= world.MAX_REGISTERED:
+                    return self._send(409, {"error": "pilot registration limit reached"})
+                if space == "classroom" and not world.classroom_available(state, None, None):
                     return self._send(409, {"error": "playground is full",
                                             "max_agents": MAX_AGENTS})
                 aid = new_id("agent")
@@ -1523,6 +1551,8 @@ class Handler(BaseHTTPRequestHandler):
                     "credits": 0,
                     "status": "idle",
                     "current_task": None,
+                    "location": {"space": space, "goal_id": None},
+                    "social_enabled": body.get("social_enabled", False),
                     "last_heartbeat": utcnow(),
                 }
                 state["agents"][aid] = agent
@@ -1649,6 +1679,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(409, {"error": f"task is {task['status']}"})
                 if any(state["tasks"].get(d, {}).get("status") != "done" for d in task.get("dependencies", [])):
                     return self._send(409, {"error": "dependencies not completed"})
+                space_error = world.claim_error(state, aid, task["goal_id"])
+                if space_error:
+                    return self._send(space_error["code"], space_error)
                 # A new attempt must not inherit rejected artifacts or progress.
                 task["artifact_ids"] = []
                 task["progress"] = []
