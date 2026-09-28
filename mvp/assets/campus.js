@@ -20,14 +20,15 @@ function buildCampus() {
   scene.background=new THREE.Color('#f4dfd5');
   scene.fog=new THREE.Fog('#f4dfd5',45,85);
   const camera=new THREE.OrthographicCamera(-18,18,12,-12,.1,120);
-  let orbit=.64, zoom=1, focus=0;
+  let orbit=.3, zoom=1, focus=-6.8, room="playground";
+  const follow=document.getElementById("followAgent");
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
   renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure=1.0;
   renderer.shadowMap.enabled=true;
   renderer.shadowMap.type=THREE.PCFShadowMap;
-  renderer.domElement.setAttribute('aria-label','3D toy garden and cutaway Classroom; full agent details are available in the 2D view.');
+  renderer.domElement.setAttribute('aria-label','3D toy garden and cutaway Study Hall; full agent details are available in the 2D view.');
   renderer.domElement.setAttribute('role','img');
   host.appendChild(renderer.domElement);
   scene.add(new THREE.HemisphereLight('#fff3e1','#96b7ba',1.7));
@@ -69,7 +70,8 @@ function buildCampus() {
     return sprite;
   }
   // Rounded floating base and two distinct material worlds.
-  box('#c4b5b2',[0,-.9,0],[27,1.4,16]);
+  box('#c4b5b2',[-6.8,-.9,0],[13.4,1.4,16]);
+  box('#c4b5b2',[6.8,-.9,0],[13.4,1.4,16]);
   box('#a2cdb2',[-6.8,-.12,0],[13.4,.3,15.5]);
   box('#eed7b4',[6.8,-.1,0],[13.2,.35,15.5]);
   box('#edbfa9',[0,.08,5.8],[26,.12,1.1]);
@@ -107,10 +109,29 @@ function buildCampus() {
     const p=spot('classroom',i);
     box('#cd9e73',[p.x,.63,p.z-.5],[1.85,.14,.86],station);
     for(const dx of [-.55,.55]) box('#a77e62',[p.x+dx,.31,p.z-.5],[.09,.62,.48],station);
-    box('#fff4d9',[p.x-.15,.735,p.z-.5],[.55,.045,.4],station);
-    box('#d59096',[p.x+.14,.76,p.z-.5],[.025,.05,.39],station);
+    // Each occupied workspace gets a laptop, notebook and ceramic mug.
+    box('#aaa7bc',[p.x,.75,p.z-.45],[.68,.045,.43],station);
+    box('#77758e',[p.x,1,p.z-.66],[.68,.48,.045],station);
+    box('#c4e2dc',[p.x,1,p.z-.628],[.59,.38,.012],station);
+    for(let line=0;line<3;line++)box('#fff3df',[p.x-.06,1.08-line*.08,p.z-.617],[.36-line*.07,.015,.005],station);
+    box('#f1d2aa',[p.x-.62,.74,p.z-.43],[.3,.035,.35],station);
+    disc('#f4e4cf',[p.x+.58,.83,p.z-.39],[.1,.19,.1],station);
+    disc('#856c5b',[p.x+.58,.929,p.z-.39],[.077,.006,.077],station);
     disc(['#c5b4cf','#a7c3b0','#e3b199','#d9c582'][i%4],[p.x,.3,p.z+.38],[.32,.5,.32],station);
   }
+  // A four-person project table and a smaller round collaboration table.
+  box('#d5ad86',[5.6,.68,-4.75],[3.4,.15,1.15]);
+  for(const x of [4.4,6.8])for(const z of [-5.65,-3.85])disc('#b7c8c1',[x,.35,z],[.35,.65,.35]);
+  for(const x of [4.5,6.7])box('#e8c9d2',[x,.78,-4.75],[.55,.04,.4]);
+  disc('#e1bb91',[8.9,.68,-4.65],[.8,.14,.8]);
+  disc('#bca8cb',[8.9,.32,-3.55],[.35,.6,.35]);
+  // Coffee bar on the front promenade, separated from desk aisles.
+  box('#aabcb0',[4.6,.55,7],[3.3,1.1,.8]);
+  box('#e6c8a5',[4.6,1.14,7],[3.5,.12,.95]);
+  box('#77788b',[5.4,1.48,7],[.7,.6,.55]);
+  box('#e0d7d1',[5.4,1.48,7.3],[.52,.35,.05]);
+  for(const x of [3.4,3.75,4.1])disc('#f8edd9',[x,1.3,7],[.12,.2,.12]);
+  label('COFFEE & IDEAS',4.5,1.9,7,2.6);
   // Compact lounge lane stays outside every agent seat/aisle.
   box('#abbcc9',[11.65,.4,1.4],[1.25,.7,2.5]);
   box('#b7c8d0',[12.2,.95,1.4],[.24,1.1,2.55]);
@@ -179,9 +200,13 @@ function buildCampus() {
   for(const z of [4.95,6.65])disc('#f7e4ce',[0,1,z],[.11,2,.11]);
   box('#cfaaa7',[0,2,5.8],[.2,.16,1.9]);
   label('THE PLAYGROUND',-7,4.9,-4.8,5);
-  label('THE CLASSROOM',7,5.15,-6.7,5);
+  label('THE STUDY HALL',7,5.15,-6.7,5);
   // Cotton clouds hang behind the campus like miniature set dressing.
   for(const x of [-12,0,11])for(let i=0;i<3;i++)ball('#fff2e7',[x+i*.8,7+(i%2)*.35,-9],[1.1,.5,.6]);
+  // Static sets are independently visible. Lights remain shared.
+  const sets=scene.children.filter(o=>o.isMesh||o.isSprite||o.isGroup).map(o=>({o,side:o.position.x<0?'playground':o.position.x>0?'classroom':'shared'}));
+  // Station groups use world-space children, so classify explicitly.
+  for(const entry of sets)if(stations.includes(entry.o))entry.side='classroom';
   const actors=new Map();
   const palettes=['#f2bbad','#b9cfc1','#c5bce1','#f0d28d','#b4d2df','#e3b6cb'];
   function character(agent) {
@@ -212,6 +237,10 @@ function buildCampus() {
     }
     box('#fcf0d6',[0,.77,.28],[.24,.22,.025],body);
     ball(palettes[(seed+2)%palettes.length],[0,.8,.31],[.055,.055,.02],body);
+    // Cushioned headphones echo the approved plush reference without costly fur.
+    for(const side of [-1,1])ball('#d5cbbf',[side*.44,1.2,0],[.12,.22,.23],body);
+    const band=new THREE.Mesh(new THREE.TorusGeometry(.45,.055,8,20,Math.PI),mat('#b6ada6'));
+    band.position.set(0,1.2,0);body.add(band);
     const name=label(agent.name,0,2,0,1.7);root.userData.agentId=agent.id;
     return {root,body,arms,feet,name,seed,agent,path:null,start:0,duration:1,space:agent.presence.space};
   }
@@ -233,13 +262,17 @@ function buildCampus() {
       scene.remove(a.root,a.name);a.name.material.map.dispose();a.name.material.dispose();
       a.root.traverse(o=>{if(o.geometry && ![sphere,cube,cylinder].includes(o.geometry))o.geometry.dispose()});actors.delete(id);
     }
-    stations.forEach((station,i)=>{station.visible=i<Math.max(4,counts.classroom)});
+    stations.forEach((station,i)=>{station.userData.occupied=i<Math.max(4,counts.classroom)});
+    const selected=follow.value;
+    follow.replaceChildren(new Option('Choose an agent',''),...shown.map(a=>new Option(a.name,a.id)));
+    follow.value=actors.has(selected)?selected:'';
+    if(selected&&!actors.has(selected))setRoom('campus');
     status.textContent=`3D campus · ${shown.length} characters${world.agents.length>RENDER_LIMIT ? ' shown of '+world.agents.length+' (full roster in 2D)' : ''} · decorative idle animation is not agent activity`;
   }
   function resize() {
     const width=host.clientWidth || 900,height=Math.min(620,Math.max(360,width*.6));
     renderer.setSize(width,height);const aspect=width/height;
-    const extent=Math.max(12,19/aspect);
+    const extent=room==='campus'?Math.max(12,19/aspect):Math.max(9,10/aspect);
     camera.left=-extent*aspect;camera.right=extent*aspect;camera.top=extent;camera.bottom=-extent;camera.updateProjectionMatrix();
   }
   function setView() {
@@ -249,10 +282,15 @@ function buildCampus() {
   mode.addEventListener('change',setView);
   document.getElementById('cameraLeft').addEventListener('click',()=>{orbit-=.16});
   document.getElementById('cameraRight').addEventListener('click',()=>{orbit+=.16});
-  document.getElementById('cameraHome').addEventListener('click',()=>{orbit=.64;zoom=1;focus=0;document.getElementById('cameraZoom').value='1'});
+  function setRoom(next) {
+    if(room===next)return;
+    room=next;focus=room==='classroom'?6.8:room==='playground'?-6.8:0;resize();
+  }
+  follow.addEventListener('change',()=>{const a=actors.get(follow.value);if(a)setRoom(a.space)});
+  document.getElementById('cameraHome').addEventListener('click',()=>{follow.value='';orbit=.3;zoom=1;setRoom('campus');document.getElementById('cameraZoom').value='1'});
   document.getElementById('cameraZoom').addEventListener('input',e=>{zoom=Number(e.target.value)});
   addEventListener('playgrounds-world',e=>sync(e.detail.world));
-  addEventListener('playgrounds-focus',e=>{focus=e.detail==='classroom'?5:-5});
+  addEventListener('playgrounds-focus',e=>{follow.value='';setRoom(e.detail)});
   const observer=new ResizeObserver(resize);observer.observe(host);
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();mode.value='2d';mode.disabled=true;setView();status.textContent='3D context lost — 2D remains available. Reload to retry.'});
   let last=0; const look=new THREE.Vector3();
@@ -266,8 +304,14 @@ function buildCampus() {
     carousel.userData.lastFrame=now;
     host.dataset.carouselAngle=String(carousel.rotation.y);
     host.dataset.setting='slide-carousel-monkey-bars-modern-study';
-    camera.zoom=zoom;camera.position.set(Math.sin(orbit)*32,24,Math.cos(orbit)*32);
-    look.x=reduce.matches?focus:THREE.MathUtils.lerp(look.x,focus,.06);
+    const followed=actors.get(follow.value);
+    if(followed)setRoom(followed.path?'campus':followed.space);
+    for(const {o,side} of sets)o.visible=(room==='campus'||side===room)&&(o.userData.occupied!==false);
+    host.dataset.room=room;
+    host.dataset.following=follow.value;
+    camera.zoom=zoom;
+    look.x=reduce.matches||!ambientMotion?focus:THREE.MathUtils.lerp(look.x,focus,.12);
+    camera.position.set(look.x+Math.sin(orbit)*32,24,Math.cos(orbit)*32);
     camera.lookAt(look.x,0,0);camera.updateProjectionMatrix();
     for(const a of actors.values()) {
       const activity=visualActivity(a.agent,Date.now()/1000), stale=activity==='stale';
@@ -287,6 +331,8 @@ function buildCampus() {
       a.root.scale.setScalar(stale?.88:1);
       a.arms.forEach((arm,i)=>arm.rotation.x=motion*(walking?Math.sin(seconds*12+i*Math.PI)*.5:activity==='working'?-.65+Math.sin(seconds*4+i)*.12:0));
       a.feet.forEach((foot,i)=>foot.position.y=.15+motion*(walking?Math.max(0,Math.sin(seconds*12+i*Math.PI))*.15:0));
+      a.root.visible=room==='campus'||a.space===room;
+      a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,2.1,a.root.position.z);
     }
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
