@@ -9,7 +9,7 @@ assert.ok(chrome && existsSync(chrome),'CHROME_PATH must explicitly identify ins
 const temp=mkdtempSync(join(tmpdir(),'playgrounds-chrome-'));
 const base='http://127.0.0.1:8494';
 const output=resolve('mvp/browser-qa/artifacts');mkdirSync(output,{recursive:true});
-const server=spawn('python3',['mvp/server.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8494'},stdio:['ignore','pipe','pipe']});
+const server=spawn('python3',['mvp/browser-qa/fixture_server.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8494'},stdio:['ignore','pipe','pipe']});
 let logs='';server.stdout.on('data',d=>logs+=d);server.stderr.on('data',d=>logs+=d);
 let browser,heartbeat;
 const presence=world=>world.agents.map(({last_heartbeat,...agent})=>agent);
@@ -62,10 +62,13 @@ try {
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'carousel-ride-desktop.png')});
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).carousel>=1,null,{timeout:90000});
   for(const [kind,stage,pose] of [['slide','slide','slide'],['monkey','traverse','hang']]) {
+    // Side view makes the hanging pose visible behind the front ladder.
+    if(kind==='monkey')for(let i=0;i<3;i++)await page.click('#cameraRight');
     await page.selectOption('#interactionKind',kind);await page.click('#tryInteraction');
     await page.waitForFunction(({id,stage,pose})=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage===stage&&a.pose===pose),{id:agents[4].id,stage,pose},{timeout:90000});
     await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,`${kind}-interaction-desktop.png`)});
     await page.waitForFunction(kind=>JSON.parse(document.getElementById('campus3d').dataset.completed)[kind]>=1,kind,{timeout:90000});
+    if(kind==='monkey')for(let i=0;i<3;i++)await page.click('#cameraLeft');
   }
   assert.deepEqual(presence(await api('/api/world')),beforeAmbient,'ambient interaction must not change agent work state');
   assert.deepEqual(await api('/api/ledger'),beforeLedger,'ambient interaction must not create ledger entries');

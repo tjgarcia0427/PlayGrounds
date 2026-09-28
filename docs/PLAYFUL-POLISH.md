@@ -49,4 +49,9 @@ spatial path interpolation and reduced-motion blinking. Chrome captures slide an
 monkey-bar poses, completes both loops, and interrupts a slide via a real task
 claim. Existing coffee/carousel, state isolation, mobile and fallback checks remain.
 
+The isolated Chrome fixture uses one-hour stall/lease deadlines so the extended
+software-rendered tour cannot generate unrelated orchestration events. The full
+unchanged-ledger assertion remains; production timing and stall tests are untouched.
+The monkey-bar capture uses the ordinary rotate-camera controls for a side view.
+
 Review/merge via Vision, never self-merge; no deployment in this pass.
