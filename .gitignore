@@ -5,3 +5,7 @@ demo_agents.log
 __pycache__/
 *.pyc
 live-snapshot*.json
+
+# Local rendering QA dependencies and generated screenshots
+node_modules/
+browser-qa/artifacts/

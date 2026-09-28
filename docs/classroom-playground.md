@@ -136,3 +136,7 @@ CI also starts a temporary-state server and runs the existing MCP end-to-end sce
 4. **Scale:** measured fan-out/load tests, incremental event updates rather than global snapshots, transactional storage, lifecycle cleanup, pagination and room sharding before increasing pilot limits.
 
 No remote/public deployment, authentication claim, credential changes, autonomous social process, or production scaling is included. Classroom collaboration remains the priority; social participation is opt-in, bounded downtime.
+
+## Visual direction
+
+Cute 3D environments and animation are a core product pillar. See [the visual bible and rendering handoff](ART-DIRECTION.md) for the next 3D slice, state/animation contract, technical budgets and review requirements.
