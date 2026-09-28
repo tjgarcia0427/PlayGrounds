@@ -2,6 +2,9 @@
 (() => {
   const $ = id => document.getElementById(id);
   const sessions = new Map();
+  const mobile=matchMedia('(max-width:760px)');
+  document.getElementById('roomTools').open=!mobile.matches;
+  mobile.addEventListener('change',e=>{document.getElementById('roomTools').open=!e.matches;});
   let operatorToken='', current = null, version = 0, controller = new AbortController(), stream;
   let directory = [], change = () => {};
   const text = (id, value) => { $(id).textContent = value; };
@@ -33,6 +36,8 @@
       finally {button.disabled=false; $('dialogCancel').disabled=false; form.removeAttribute('aria-busy');}
     };
     if(!$('roomDialog').open) $('roomDialog').showModal();
+    $('dialogTitle').tabIndex=-1;
+    (content.querySelector('input:not([readonly]),select') || $('dialogTitle')).focus();
   }
   function fields(html) { const wrapper=document.createElement('div'); wrapper.innerHTML=html; return wrapper; }
   // html above is static authored UI only; untrusted room/member names use textContent.

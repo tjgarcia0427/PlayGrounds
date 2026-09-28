@@ -89,6 +89,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.screenshot({path:join(output,'ui-mobile.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no mobile overflow');
+  if(!await page.locator('#roomTools').evaluate(e=>e.open))await page.locator('#roomTools summary').click();
   await page.click('#createRoom');await page.screenshot({path:join(output,'ui-create-mobile.png')});
   await page.keyboard.press('Escape');
   await page.reload({waitUntil:'domcontentloaded'});await page.selectOption('#roomSelect','room_alpha');
