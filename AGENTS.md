@@ -4,6 +4,14 @@ Two independent agents build this repo: **Vision** (Muse) and **VISIONQUEST** (O
 **Tj** owns the repo and sets direction. He does not manage PRs — review and
 merge are handled by the two agents under the rules below.
 
+**Identity note:** both agents operate through Tj's single GitHub user
+(`tjgarcia0427`). GitHub-side identity is therefore shared: commits, issues,
+and comments all render as the same user. Real attribution lives one layer
+up — **protocol names (Vision / VISIONQUEST) signed in comment bodies and
+commit trailers**. Never rely on the GitHub username to tell agents apart.
+This is exactly the "identity ambiguity" drawback below, reproduced live:
+the workaround is protocol-level until per-agent identity ships.
+
 ## The meta-point (read this first)
 
 We are dogfooding. This protocol implements Playgrounds' coordination primitives
@@ -26,9 +34,11 @@ substrate changes.
 4. **Duplicated or dropped work.** Two agents, no ledger: both fix the same
    thing, or neither does. → One assignee per issue = the claim lease.
    Unassign when blocked so the other agent can pick it up.
-5. **Identity ambiguity.** Who approved what, who wrote what. →
-   Every action is attributed by the platform (commit author, reviewer,
-   merger). No impersonation, ever — not even as a joke.
+5. **Identity ambiguity.** Who approved what, who wrote what. → Both agents
+   currently share one GitHub user (`tjgarcia0427`), so attribution is by
+   **protocol-name signatures** in comment bodies and commit trailers, never
+   by GitHub username. No impersonation, ever — not even as a joke. Signing
+   the other agent's name is the one unforgivable act in this repo.
 6. **Decision evaporation.** Agreements made in chat vanish by next session. →
    Decisions land as issue/PR comments or in docs. Chat messages are
    notifications only ("review requested on #15", "CI is green").
@@ -64,35 +74,46 @@ verification model:
    the diff is a protocol violation.
 
 **No self-merge, ever.** The *reviewer* merges after approving. You never land
-your own code. Tj chose to stay out of the PR loop, so mutual review is the
-trust anchor — treat it as load-bearing, not ceremonial. Recommended
-reinforcement (Tj, one-time, repo Settings → Branches): branch protection on
-`main` requiring a pull request, 1 approving review, and green CI before merge.
-That turns this section from convention into enforcement.
+your own code. Because both agents share one GitHub user, GitHub's formal
+reviewer assignment and approving reviews are unavailable (you cannot request
+a review from yourself, nor approve your own PR). Approvals are **signed PR
+comments** in this format:
+
+> **Approved by VISIONQUEST** — reviewed the diff, CI green, acceptance
+> criteria met. Merging.
+
+The reviewer executes the merge after posting it. Tj chose to stay out of the
+PR loop, so mutual review is the trust anchor — treat it as load-bearing, not
+ceremonial. Recommended reinforcement (Tj, one-time, repo Settings →
+Branches): branch protection on `main` requiring a pull request and green CI
+before merge. Do **not** require approving reviews — with a shared account
+that would deadlock every merge, since GitHub sees author and approver as
+the same user. That turns this section from convention into enforcement.
 
 ### Message system
 
 The repo is the bus. Two signal types, both in-repo and attributable:
 
-1. **Review requests** — the formal signal. On your PR: assign the other
-   agent as reviewer (GitHub reviewer assignment) and leave a comment tagging
-   them (`@<username> ready for review — closes #N`). The review request IS
-   the ping; no side channel needed.
+1. **Review requests** — the formal signal. On your PR, leave a comment:
+   `ready for review by VISIONQUEST — closes #N` (or `by Vision`). GitHub
+   reviewer assignment is unavailable (shared account), so the protocol-name
+   tag in the comment body IS the ping. The reviewer posts a signed
+   **approval comment** (see format above) and merges.
 2. **General pings** — issue comments. Progress updates, questions, handoffs,
-   and "I'm picking up #N" all go on the relevant issue.
+   and "I'm picking up #N" all go on the relevant issue. Sign them.
 
 **Session-start poll (mandatory).** Neither agent has push notifications.
 At the start of every work session, check for inbound signals:
 
-- Open PRs where you are the requested reviewer.
-- Open issues assigned to you or mentioning you.
+- Open PRs whose comments name your protocol name as reviewer.
+- Open issues assigned to you or naming your protocol name.
 
 Tj remains the human out-of-band relay if the repo signals ever go
 unanswered for more than 48h.
 
-**Agent handles (protocol names):** Vision, VISIONQUEST. Map these to GitHub
-usernames in this section once known; until then, tag by protocol name in
-comments and assign reviewers by username when known.
+**Agent handles (protocol names):** Vision, VISIONQUEST. Both act as GitHub
+user `tjgarcia0427`. Tag and sign by protocol name in every comment and
+commit trailer; never rely on the GitHub username for attribution.
 
 ### Communication rules
 
@@ -114,7 +135,7 @@ comments and assign reviewers by username when known.
 | Branch                     | Work attempt                           |
 | CI green                   | Deterministic verification checks      |
 | Peer review                | Agent verification judgment            |
-| Tj merge                   | Settlement + human verification        |
+| Reviewer merge (signed approval comment) | Settlement + agent verification |
 | Commit hash                | Artifact digest                        |
 | This file                  | Room policy                            |
 
