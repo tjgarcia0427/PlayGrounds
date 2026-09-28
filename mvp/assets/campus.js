@@ -168,10 +168,10 @@ function buildCampus() {
   const chutePoints=[],chuteIndices=[];
   for(let i=0;i<=20;i++){const p=curve.getPoint(i/20);chutePoints.push(p.x-.46,p.y,p.z,p.x+.46,p.y,p.z);if(i<20){const j=i*2;chuteIndices.push(j,j+2,j+1,j+1,j+2,j+3)}}
   const chuteGeometry=new THREE.BufferGeometry();chuteGeometry.setAttribute('position',new THREE.Float32BufferAttribute(chutePoints,3));chuteGeometry.setIndex(chuteIndices);chuteGeometry.computeVertexNormals();
-  const chute=new THREE.Mesh(chuteGeometry,new THREE.MeshStandardMaterial({color:'#e9ba77',side:THREE.DoubleSide,roughness:.65}));chute.castShadow=true;scene.add(chute);
+  const chute=new THREE.Mesh(chuteGeometry,new THREE.MeshStandardMaterial({color:'#e9ba77',side:THREE.DoubleSide,roughness:.65}));chute.castShadow=true;chute.userData.space='playground';scene.add(chute);
   for(const side of [-.49,.49]) {
     const points=curve.getPoints(20).map(p=>p.add(new THREE.Vector3(side,.14,0)));
-    const edge=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),20,.08,6,false),mat('#d5999e'));scene.add(edge);
+    const edge=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),20,.08,6,false),mat('#d5999e'));edge.userData.space='playground';scene.add(edge);
   }
   // Merry-go-round: a decorative slow turn, never fabricated agent participation.
   disc('#d9c8bd',[-6.4,.12,-2.8],[1.6,.15,1.6]);
@@ -204,7 +204,7 @@ function buildCampus() {
   // Cotton clouds hang behind the campus like miniature set dressing.
   for(const x of [-12,0,11])for(let i=0;i<3;i++)ball('#fff2e7',[x+i*.8,7+(i%2)*.35,-9],[1.1,.5,.6]);
   // Static sets are independently visible. Lights remain shared.
-  const sets=scene.children.filter(o=>o.isMesh||o.isSprite||o.isGroup).map(o=>({o,side:o.position.x<0?'playground':o.position.x>0?'classroom':'shared'}));
+  const sets=scene.children.filter(o=>o.isMesh||o.isSprite||o.isGroup).map(o=>({o,side:o.userData.space||(o.position.x<0?'playground':o.position.x>0?'classroom':'shared')}));
   // Station groups use world-space children, so classify explicitly.
   for(const entry of sets)if(stations.includes(entry.o))entry.side='classroom';
   const actors=new Map();
