@@ -25,7 +25,7 @@ export class InteractionDirector {
     return {position:{...s.position},exit:s.kind==='carousel'&&['board','ride','unboard'].includes(s.stage)?{...CAROUSEL_ENTRY}:null};
   }
   tick(dt,actors,enabled,angle,automatic=true) {
-    this.clock+=Math.max(0,dt);const output=new Map(),seen=new Set(actors.map(a=>a.id));
+    this.clock+=enabled?Math.max(0,dt):0;const output=new Map(),seen=new Set(actors.map(a=>a.id));
     for(const id of this.active.keys())if(!seen.has(id))this.cancel(id);
     for(const id of this.due.keys())if(!seen.has(id))this.due.delete(id);
     for(const actor of actors) {

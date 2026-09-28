@@ -32,6 +32,7 @@ for(const phase of ['outbound','board','ride','unboard','return'])assert.ok(stag
 assert.equal(JSON.stringify([a,b,c]),snapshot,'presentation must never mutate authoritative descriptors');
 const q=new InteractionDirector(route);q.start(a);q.tick(.1,[{...a,stale:true}],true,0);assert.equal(q.leases.size,0);
 q.start(a);q.tick(.1,[a],false,0);assert.equal(q.active.size,0);assert.equal(q.leases.size,0);
+const frozenClock=q.clock;q.tick(60,[a],false,0);assert.equal(q.clock,frozenClock,'Still scene must freeze pose scheduling, not just limb motion');
 q.start(a);q.tick(.1,[],true,0);assert.equal(q.active.size,0,'departed agent releases slot');
 const rideDirector=new InteractionDirector(route);rideDirector.start(c);
 for(let i=0;i<1000&&rideDirector.active.get(c.id)?.stage!=='ride';i++)rideDirector.tick(.1,[c],true,i*.02,false);
