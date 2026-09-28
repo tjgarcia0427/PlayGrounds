@@ -6,6 +6,8 @@ import {spot,RENDER_LIMIT} from './campus-layout.js';
 export const DESK={width:1.4,depth:.5,offset:-.72};
 export const COFFEE={x:6.8,z:6.05};
 export const CAROUSEL_ENTRY={x:-6.4,z:-.45};
+export const SLIDE_ENTRY={x:-10.5,z:-5.5},SLIDE_EXIT={x:-10.5,z:.05};
+export const MONKEY_ENTRY={x:-2.9,z:-5.5},MONKEY_EXIT={x:-2.9,z:-1.1};
 export const RADIUS=.34;
 export function obstacles() {
   const boxes=[];

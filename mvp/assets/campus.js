@@ -1,8 +1,8 @@
 import * as THREE from './vendor/three.module.js';
-import {hashId,spot,walkPoint,visualActivity,RENDER_LIMIT} from './campus-layout.js';
+import {hashId,spot,visualActivity,RENDER_LIMIT} from './campus-layout.js';
 
 import {createNavigator,DESK} from './campus-navigation.js';
-import {InteractionDirector,routeLength} from './campus-interactions.js';
+import {InteractionDirector,routeLength,walkSpatial,SLIDE_CURVE,blinkAmount} from './campus-interactions.js';
 import {animateCharacter} from './campus-animation.js';
 
 const host=document.getElementById('campus3d');
@@ -164,12 +164,12 @@ function buildCampus() {
   ball('#c6e6df',[-11,.98,3.4],[.25,.32,.25]);
   // Slide: a tiny roofed tower, ladder and smooth curved pastel chute.
   disc('#d5cfa7',[-10.5,.07,-2.9],[1.75,.12,2.1]);
-  for(const x of [-11.1,-9.9])for(const z of [-4.1,-3.2])rail('#e6c89c',[x,.1,z],[x,2.25,z],.09);
+  for(const x of [-11.1,-9.9])for(const z of [-4.1,-3.2])rail('#e6c89c',[x,.1,z],[x,3.75,z],.09);
   box('#cfa57e',[-10.5,1.6,-3.7],[1.4,.15,1.25]);
-  const roof=new THREE.Mesh(new THREE.ConeGeometry(1.12,.6,4),mat('#dba8ac'));roof.rotation.y=Math.PI/4;roof.position.set(-10.5,2.7,-3.7);scene.add(roof);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(1.12,.6,4),mat('#dba8ac'));roof.rotation.y=Math.PI/4;roof.position.set(-10.5,4.05,-3.7);scene.add(roof);
   for(let i=0;i<5;i++)rail('#b4caca',[-11.18,.25+i*.3,-4.6],[-9.82,.25+i*.3,-4.6],.065);
   for(const x of [-11.18,-9.82])rail('#b1b4cf',[x,.1,-4.65],[x,1.8,-4.2],.065);
-  const curve=new THREE.CatmullRomCurve3([new THREE.Vector3(-10.5,1.65,-3.05),new THREE.Vector3(-10.5,1.3,-2.6),new THREE.Vector3(-10.5,.45,-1.5),new THREE.Vector3(-10.5,.2,-.75)]);
+  const curve=SLIDE_CURVE;
   const chutePoints=[],chuteIndices=[];
   for(let i=0;i<=20;i++){const p=curve.getPoint(i/20);chutePoints.push(p.x-.46,p.y,p.z,p.x+.46,p.y,p.z);if(i<20){const j=i*2;chuteIndices.push(j,j+2,j+1,j+1,j+2,j+3)}}
   const chuteGeometry=new THREE.BufferGeometry();chuteGeometry.setAttribute('position',new THREE.Float32BufferAttribute(chutePoints,3));chuteGeometry.setIndex(chuteIndices);chuteGeometry.computeVertexNormals();
@@ -218,15 +218,17 @@ function buildCampus() {
     const seed=hashId(agent.id), color=palettes[seed%palettes.length];
     const root=new THREE.Group(), body=new THREE.Group();root.add(body);body.name="Body";scene.add(root);
     ball(color,[0,.59,0],[.36,.48,.29],body);
-    ball(color,[0,1.16,0],[.43,.39,.36],body);
+    const head=new THREE.Group(),eyes=[];head.name='Head';body.add(head);
+    ball(color,[0,1.16,0],[.43,.39,.36],head);
     for(const side of [-1,1]) {
-      ball(color,[side*.29,1.49,0],[.16,(seed%3===0?.3:.17),.14],body);
-      ball('#f9dcd3',[side*.29,1.49,.105],[.09,(seed%3===0?.2:.1),.05],body);
-      ball('#4d455a',[side*.14,1.2,.329],[.048,.07,.027],body);
-      ball('#fff8e9',[side*.14-.01,1.222,.35],[.013,.018,.008],body);
-      ball('#eaa9a6',[side*.27,1.08,.285],[.085,.04,.025],body);
+      ball(color,[side*.29,1.49,0],[.16,(seed%3===0?.3:.17),.14],head);
+      ball('#f9dcd3',[side*.29,1.49,.105],[.09,(seed%3===0?.2:.1),.05],head);
+      const eye=new THREE.Group();eye.position.set(side*.14,1.2,.329);head.add(eye);eyes.push(eye);
+      ball('#4d455a',[0,0,0],[.048,.07,.027],eye);
+      ball('#fff8e9',[-.01,.022,.021],[.013,.018,.008],eye);
+      ball('#eaa9a6',[side*.27,1.08,.285],[.085,.04,.025],head);
     }
-    ball('#775965',[0,1.1,.362],[.045,.03,.024],body);
+    ball('#775965',[0,1.1,.362],[.045,.03,.024],head);
     const arms=[-1,1].map((side,i)=>{const pivot=new THREE.Group();pivot.name=i?'RightArm':'LeftArm';pivot.position.set(side*.39,.85,0);body.add(pivot);ball(color,[0,-.19,0],[.13,.28,.14],pivot);return pivot});
     const feet=[-1,1].map(side=>ball('#f4e4cd',[side*.2,.15,.08],[.17,.16,.23],root));
     feet.forEach((foot,i)=>foot.name=i?'RightFoot':'LeftFoot');
@@ -235,23 +237,24 @@ function buildCampus() {
     const handle=new THREE.Mesh(new THREE.TorusGeometry(.075,.025,6,10),mat('#f7ebd8'));handle.position.set(.11,0,0);mug.add(handle);mug.visible=false;
     // Deterministic accessories give stable identity without introducing external assets.
     if(seed%3===1) {
-      box('#766b97',[0,1.24,.37],[.5,.035,.03],body);
+      box('#766b97',[0,1.24,.37],[.5,.035,.03],head);
       for(const side of [-1,1]) {
         const ring=new THREE.Mesh(new THREE.TorusGeometry(.105,.018,6,12),mat('#766b97'));
-        ring.position.set(side*.145,1.24,.378);body.add(ring);
+        ring.position.set(side*.145,1.24,.378);head.add(ring);
       }
     } else if(seed%3===2) {
-      disc('#91b6a7',[0,1.55,0],[.31,.12,.28],body);
-      ball('#e8c88b',[.15,1.64,.08],[.07,.08,.07],body);
+      disc('#91b6a7',[0,1.55,0],[.31,.12,.28],head);
+      ball('#e8c88b',[.15,1.64,.08],[.07,.08,.07],head);
     }
     box('#fcf0d6',[0,.77,.28],[.24,.22,.025],body);
     ball(palettes[(seed+2)%palettes.length],[0,.8,.31],[.055,.055,.02],body);
     // Cushioned headphones echo the approved plush reference without costly fur.
-    for(const side of [-1,1])ball('#d5cbbf',[side*.44,1.2,0],[.12,.22,.23],body);
+    for(const side of [-1,1])ball('#d5cbbf',[side*.44,1.2,0],[.12,.22,.23],head);
     const band=new THREE.Mesh(new THREE.TorusGeometry(.45,.055,8,20,Math.PI),mat('#b6ada6'));
-    band.position.set(0,1.2,0);body.add(band);
+    band.position.set(0,1.2,0);head.add(band);
+    head.position.y=.98;for(const child of head.children)child.position.y-=.98;
     const name=label(agent.name,0,2,0,1.7);root.userData.agentId=agent.id;
-    return {root,body,arms,feet,mug,animation:animateCharacter(root),name,seed,agent,path:null,start:0,duration:1,space:agent.presence.space};
+    return {root,body,head,eyes,arms,feet,mug,animation:animateCharacter(root),name,seed,agent,path:null,start:0,duration:1,space:agent.presence.space};
   }
   function sync(world) {
     const shown=[...world.agents].sort((a,b)=>a.id.localeCompare(b.id)).slice(0,RENDER_LIMIT);
@@ -261,10 +264,10 @@ function buildCampus() {
       let actor=actors.get(agent.id);
       if(!actor) { actor=character(agent);actors.set(agent.id,actor);actor.root.position.set(goal.x,0,goal.z); }
       else if(actor.target && (actor.target.x!==goal.x || actor.target.z!==goal.z || actor.stamp!==JSON.stringify(agent.presence))) {
-        const interrupted=director.cancel(agent.id),from={x:actor.root.position.x,z:actor.root.position.z};
+        const interrupted=director.cancel(agent.id,true),from={x:actor.root.position.x,y:actor.root.position.y,z:actor.root.position.z};
         const exit=interrupted?.exit,next=route(exit||from,goal);
-        actor.path=next?(exit?[from,...next]:next):null;
-        if(!next)actor.root.position.set(goal.x,0,goal.z); // no invented route through a blocked set
+        actor.path=next?(exit?[...(interrupted.escape||[from,exit]),...next.slice(1)]:next):null;
+        if(!next){actor.root.position.set(goal.x,0,goal.z);director.finishExit(agent.id);} // no invented route through a blocked set
         actor.start=performance.now();actor.duration=actor.path?Math.max(500,routeLength(actor.path)/1.8*1000):1;
         actor.crossing=actor.space!==agent.presence.space;
       }
@@ -272,7 +275,7 @@ function buildCampus() {
       actor.target=goal;actor.space=agent.presence.space;actor.agent=agent;
     }
     for(const [id,a] of actors)if(!seen.has(id)) {
-      director.cancel(id);a.animation.dispose();scene.remove(a.root,a.name);a.name.material.map.dispose();a.name.material.dispose();
+      director.cancel(id);director.finishExit(id);a.animation.dispose();scene.remove(a.root,a.name);a.name.material.map.dispose();a.name.material.dispose();
       a.root.traverse(o=>{if(o.geometry && ![sphere,cube,cylinder].includes(o.geometry))o.geometry.dispose()});actors.delete(id);
     }
     stations.forEach((station,i)=>{station.userData.occupied=i<Math.max(4,counts.classroom)});
@@ -314,8 +317,8 @@ function buildCampus() {
   const describe=a=>({id:a.agent.id,seed:a.seed,space:a.space,target:a.target,moving:!!a.path,stale:visualActivity(a.agent,Date.now()/1000)==='stale'});
   document.getElementById('tryInteraction').addEventListener('click',()=>{
     const a=actors.get(follow.value),enabled=!reduce.matches&&!document.getElementById('quietMotion').checked;
-    const started=enabled&&a&&director.start(describe(a));
-    document.getElementById('interactionStatus').textContent=started?'Decorative interaction started; task state is unchanged.':!enabled?'Turn off Still scene / reduced motion to preview interactions.':'Choose a fresh, stationary agent; the interaction spot may already be occupied.';
+    const started=enabled&&a&&director.start(describe(a),document.getElementById('interactionKind').value);
+    document.getElementById('interactionStatus').textContent=started?'Decorative interaction started; task state is unchanged.':!enabled?'Turn off Still scene / reduced motion to preview interactions.':'Choose a fresh, stationary agent and an activity in its room; the spot may already be occupied.';
   });
   const observer=new ResizeObserver(resize);observer.observe(host);
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();mode.value='2d';mode.disabled=true;setView();status.textContent='3D context lost — 2D remains available. Reload to retry.'});
@@ -346,11 +349,11 @@ function buildCampus() {
       const activity=visualActivity(a.agent,Date.now()/1000), stale=activity==='stale';
       let walking=false;
       if(a.path) {
-        const t=reduce.matches||document.getElementById('quietMotion').checked?1:Math.min(1,(now-a.start)/a.duration),p=walkPoint(a.path,t);
+        const t=reduce.matches||document.getElementById('quietMotion').checked?1:Math.min(1,(now-a.start)/a.duration),p=walkSpatial(a.path,t);
         const dx=p.x-a.root.position.x,dz=p.z-a.root.position.z;
         if(Math.hypot(dx,dz)>.001)a.root.rotation.y=Math.atan2(dx,dz);
-        a.root.position.set(p.x,0,p.z);walking=t<1;
-        if(t===1)a.path=null;
+        a.root.position.set(p.x,p.y||0,p.z);walking=t<1;
+        if(t===1){a.path=null;director.finishExit(a.agent.id);}
       }
       const interaction=interactions.get(a.agent.id);
       if(interaction&&!a.path){
@@ -364,13 +367,14 @@ function buildCampus() {
       const phase=(director.clock+a.seed%23)%24;
       const pose=interaction?.pose||(walking?'walk':a.space==='classroom'?(activity==='working'?(phase>20?'stretch':phase>16?'read':'typing'):'read'):(phase>20?'wave':'idle'));
       a.animation.update(stale?'idle':pose,dt,!ambientMotion||stale);
+      for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;
       a.root.scale.setScalar(stale?.88:1);
       a.root.visible=room==='campus'||a.space===room;
       a.name.visible=a.root.visible;
-      a.name.position.set(a.root.position.x,2.1,a.root.position.z);
+      a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
-    host.dataset.interactions=JSON.stringify([...director.active].map(([id,a])=>({id,kind:a.kind,stage:a.stage})));
+    host.dataset.interactions=JSON.stringify([...director.active].map(([id,a])=>({id,kind:a.kind,stage:a.stage,pose:a.pose})));
     host.dataset.completed=JSON.stringify(director.completed);
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
     host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);

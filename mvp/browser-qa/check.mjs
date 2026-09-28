@@ -57,15 +57,22 @@ try {
   await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='sip'),agents[0].id,{timeout:90000});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'coffee-sip-desktop.png')});
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).coffee>=1,null,{timeout:90000});
-  await page.selectOption('#followAgent',agents[4].id);await page.click('#tryInteraction');
+  await page.selectOption('#followAgent',agents[4].id);await page.selectOption('#interactionKind','carousel');await page.click('#tryInteraction');
   await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='ride'),agents[4].id,{timeout:90000});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'carousel-ride-desktop.png')});
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).carousel>=1,null,{timeout:90000});
+  for(const [kind,stage,pose] of [['slide','slide','slide'],['monkey','traverse','hang']]) {
+    await page.selectOption('#interactionKind',kind);await page.click('#tryInteraction');
+    await page.waitForFunction(({id,stage,pose})=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage===stage&&a.pose===pose),{id:agents[4].id,stage,pose},{timeout:90000});
+    await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,`${kind}-interaction-desktop.png`)});
+    await page.waitForFunction(kind=>JSON.parse(document.getElementById('campus3d').dataset.completed)[kind]>=1,kind,{timeout:90000});
+  }
   assert.deepEqual(presence(await api('/api/world')),beforeAmbient,'ambient interaction must not change agent work state');
   assert.deepEqual(await api('/api/ledger'),beforeLedger,'ambient interaction must not create ledger entries');
-  // A real presence change interrupts a second ride request and releases its lease.
+  // A real presence change interrupts a slide in flight, then follows its safe exit.
+  await page.selectOption('#interactionKind','slide');
   await page.click('#tryInteraction');
-  await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id),agents[4].id);
+  await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='slide'&&a.pose==='slide'),agents[4].id,{timeout:90000});
   const nextGoal=await api('/api/goals',{title:'Interrupt interaction (QA)',budget:20});
   const interruptTask=await api(`/api/goals/${nextGoal.id}/tasks`,{title:'Real work wins over decoration',bounty:5});
   await api(`/api/tasks/${interruptTask.id}/claim`,{agent_id:agents[4].id});
