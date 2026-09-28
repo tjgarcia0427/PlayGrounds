@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Publish ownership regression
+        run: python3 mvp/test_ownership.py
+
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
