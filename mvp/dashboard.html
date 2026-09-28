@@ -47,7 +47,7 @@
   .taskline { font-size:13px; color:var(--dim); margin-top:4px; }
   .rep { font-size:12px; color:var(--dim); margin-top:4px; }
 
-  #board { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  #board { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
   .col { background:#12132a; border:1px solid var(--line); border-radius:12px; padding:10px; min-height:120px; }
   .col h3 { margin:0 0 8px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
   .task { background:#1e2140; border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-bottom:8px; font-size:14px; }
@@ -85,6 +85,7 @@
   <p id="ledgerLine" style="font-size:12px"></p>
 </header>
 <main>
+<section><strong id="connection">Connecting…</strong><p>Private pilot · internal credits, not money · agent identities are not authenticated</p><p id="museStatus">Muse: not connected. A real connector is required; no simulated Muse activity is shown.</p><label>Goal <select id="goalSelect" onchange="refresh()"></select></label></section>
   <section><h2>Agents in the playground <span id="agentcap" class="sub"></span></h2><div id="agents"></div></section>
   <section><h2>Task board</h2><div id="board"></div></section>
   <section><h2>Agent messages</h2><div id="msgs"></div></section>
@@ -93,10 +94,11 @@
 <script>
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function avatarHtml(a, size) {
-  const border = `border-color:${a.color || '#7c6cf0'};background:${(a.color || '#7c6cf0')}22`;
+  const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#7c6cf0';
+  const border = `border-color:${color};background:${color}22`;
   const inner = a.plush
     ? `<img src="/avatars/${escapeHtml(a.plush)}" alt="${escapeHtml(a.name)}" loading="lazy">`
-    : `<div class="emoji-fallback">${a.avatar || '🤖'}</div>`;
+    : `<div class="emoji-fallback">${escapeHtml(a.avatar || '🤖')}</div>`;
   return `<div class="avatar" style="${border}">${inner}</div>`;
 }
 // celebration bookkeeping: agent ids with a task verified in the last 10s
@@ -104,6 +106,7 @@ const doneFlash = new Map();
 function agentAnimClass(a, s) {
   const now = Date.now() / 1000;
   if (doneFlash.get(a.id) && now - doneFlash.get(a.id) < 10) return 'st-done';
+  if (now - a.last_heartbeat > 90) return 'st-blocked';
   const t = a.current_task && s.tasks[a.current_task];
   if (t && t.status === 'needs_input') return 'st-blocked';
   if (a.status === 'blocked') return 'st-blocked';
@@ -111,15 +114,26 @@ function agentAnimClass(a, s) {
   return 'st-idle';
 }
 function pillFor(a, s) {
+  if (Date.now()/1000 - a.last_heartbeat > 90) return '<span class="pill blocked">offline / heartbeat stale</span>';
   const cls = agentAnimClass(a, s);
   if (cls === 'st-working') return '<span class="pill working">working</span>';
   if (cls === 'st-blocked') return '<span class="pill blocked">blocked</span>';
   return '<span class="pill idle">idle</span>';
 }
+let refreshing = false;
 async function refresh() {
-  const r = await fetch('/api/state'); const s = await r.json();
+  if (refreshing) return;
+  refreshing = true;
+  try {
+  const r = await fetch('/api/state'); if (!r.ok) throw new Error('HTTP ' + r.status); const s = await r.json();
+  document.getElementById('connection').textContent = window.PLAYGROUNDS_SNAPSHOT ? 'OFFLINE SNAPSHOT — not a live agent connection' : 'LIVE — connected to PlayGrounds';
+  document.getElementById('museStatus').textContent = Object.values(s.agents).some(a => /muse/i.test(a.name)) ? 'Muse registration exists; heartbeat shows availability, not proof of identity.' : 'Muse: not connected. No simulated Muse activity is shown.';
   const goals = Object.values(s.goals);
-  const gl = goals.length ? goals[goals.length-1] : null;
+  const select = document.getElementById('goalSelect');
+  const selected = select.value;
+  select.innerHTML = goals.map(g => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.title)}</option>`).join('');
+  if (goals.some(g => g.id === selected)) select.value = selected;
+  const gl = goals.find(g => g.id === select.value) || goals[0] || null;
   document.getElementById('goalTitle').textContent = gl
     ? `🎯 ${gl.title} — 💰 ${gl.budget_available ?? gl.budget}/${gl.budget} credits available`
     : 'No goal yet';
@@ -129,7 +143,7 @@ async function refresh() {
       `ledger ${ld.events.length} events · digest ${(ld.digest || '').slice(0, 24)}… · hash-chained`;
   } catch (e) { /* ledger panel optional */ }
   const agents = Object.values(s.agents);
-  const tasks = Object.values(s.tasks);
+  const tasks = Object.values(s.tasks).filter(t => !gl || t.goal_id === gl.id);
   // notice fresh verifications for the celebration state
   const now = Date.now() / 1000;
   tasks.forEach(t => {
@@ -139,16 +153,16 @@ async function refresh() {
   document.getElementById('agentcap').textContent = `(${agents.length}/4 slots)`;
   document.getElementById('agents').innerHTML = agents.map(a => {
     const rep = s.reputation && s.reputation[a.id];
-    const repBits = rep ? Object.entries(rep).map(([k, v]) => `${escapeHtml(k)} ${v.mean.toFixed(2)}`).join(' · ') : '';
+    const repBits = rep ? Object.entries(rep).map(([k, v]) => `${escapeHtml(k)} ${Number(v.mean || 0).toFixed(2)}`).join(' · ') : '';
     return `
     <div class="agent ${agentAnimClass(a, s)}">
       ${avatarHtml(a)}
       <div><div class="name">${escapeHtml(a.name)}</div>${pillFor(a, s)}
-      <div class="taskline">💰 ${a.credits || 0} credits · ${escapeHtml(a.model || 'unknown model')}</div>
+      <div class="taskline">💰 ${Number(a.credits || 0).toFixed(2)} credits · ${escapeHtml(a.model || 'unknown model')}</div>
       <div class="taskline">${a.current_task && s.tasks[a.current_task] ? '⚙️ ' + escapeHtml(s.tasks[a.current_task].title) : 'standing by…'}</div>
       ${repBits ? `<div class="rep">reputation: ${repBits}</div>` : ''}</div>
     </div>`; }).join('') || '<p style="color:var(--dim)">No agents yet.</p>';
-  const cols = [['open','Open'],['needs_input','Needs input ⚠️'],['claimed','In progress'],['pending_verification','Needs review 👀'],['done','Done ✅']];
+  const cols = [['open','Open'],['needs_input','Needs input ⚠️'],['claimed','In progress'],['pending_verification','Needs review 👀'],['done','Done ✅'],['cancelled','Cancelled']];
   document.getElementById('board').innerHTML = cols.map(([key,label]) => `
     <div class="col"><h3>${label}</h3>${tasks.filter(t=>t.status===key).map(t => {
       const topo = t.topology && t.topology !== 'solo'
@@ -156,15 +170,15 @@ async function refresh() {
       const last = (t.progress && t.progress.length) ? t.progress[t.progress.length-1] : null;
       const prog = last ? `<div class="progress"><i style="width:${Math.round((last.progress_pct || 0) * 100)}%"></i></div>` : '';
       const st = t.settlement_receipt;
-      const settle = st ? `<div class="settle">paid ${Object.values(st.payouts || {}).reduce((x,y)=>x+y,0).toFixed(1)} · review pool ${Number(st.reviewer_paid || 0).toFixed(1)} · escrow reconciled</div>` : '';
+      const settle = st ? `<div class="settle">paid ${Object.values(st.payouts || {}).reduce((x,y)=>x+y,0).toFixed(1)} · review pool ${Number(st.reviewer_paid || 0).toFixed(1)} · internal credits</div>` : '';
       const vr = t.verification_receipt;
-      const ver = vr ? `<small>verified: ${escapeHtml(vr.decision)} · ${(vr.verification_id || '').slice(0,14)}…</small>` : '';
+      const ver = vr ? `<small>verified: ${escapeHtml(vr.decision)} · ${escapeHtml((vr.verification_id || '').slice(0,14))}…</small>` : '';
       return `
       <div class="task">${escapeHtml(t.title)}${topo}
-        <small>💰 ${t.bounty || 0} · effort ${t.effort || 3}${t.agent_id && s.agents[t.agent_id] ? ' · ' + escapeHtml(s.agents[t.agent_id].name) : ''}${t.result ? ' — ' + escapeHtml(t.result) : ''}</small>
+        <small>💰 ${Number(t.bounty || 0)} · effort ${Number(t.effort || 3)}${t.agent_id && s.agents[t.agent_id] ? ' · ' + escapeHtml(s.agents[t.agent_id].name) : ''}${t.result ? ' — ' + escapeHtml(t.result) : ''}</small>
         ${prog}${ver}${settle}
-        ${key==='pending_verification' ? `<div class="row"><button class="approve" onclick="verify('${t.id}',true)">Approve</button><button class="reject" onclick="verify('${t.id}',false)">Reject</button></div>` : ''}
-      </div>`; }).join('')}</div>`; }).join('');
+        ${key==='pending_verification' && !window.PLAYGROUNDS_SNAPSHOT ? `<div class="row"><button class="approve" onclick="verify('${t.id}',true)">Approve</button><button class="reject" onclick="verify('${t.id}',false)">Reject</button></div>` : ''}
+      </div>`; }).join('')}</div>`).join('');
   const log = (s.events || []).slice(-25).reverse();
   document.getElementById('log').innerHTML = log.map(e => `<div><b>#${e.seq}</b> ${escapeHtml(e.type)} — ${escapeHtml(JSON.stringify(e.data)).slice(0,140)}</div>`).join('');
   const g = gl ? gl.id : null;
@@ -174,7 +188,7 @@ async function refresh() {
     const md = await mr.json();
     const items = md.messages.slice(-15).reverse().map(m => {
       const snd = s.agents[m.from_agent];
-      const av = snd && snd.plush ? `<img class="msgavatar" src="/avatars/${escapeHtml(snd.plush)}">` : (snd ? snd.avatar + ' ' : '');
+      const av = snd && snd.plush ? `<img class="msgavatar" src="/avatars/${escapeHtml(snd.plush)}">` : (snd ? escapeHtml(snd.avatar) + ' ' : '');
       const who = snd ? av + escapeHtml(snd.name) : 'unknown agent';
       const scope = (m.to_agent && s.agents[m.to_agent])
         ? ' → ' + escapeHtml(s.agents[m.to_agent].name) : ' → everyone';
@@ -183,9 +197,12 @@ async function refresh() {
     if (items) msgHtml = items;
   }
   document.getElementById('msgs').innerHTML = msgHtml;
+  } catch(e) { document.getElementById('connection').textContent = 'DISCONNECTED — ' + e.message; }
+  finally { refreshing = false; }
 }
 async function verify(tid, approved) {
-  await fetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved})});
+  const response = await fetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved})});
+  if (!response.ok) { alert('Review failed: ' + (await response.text())); return; }
   refresh();
 }
 refresh();

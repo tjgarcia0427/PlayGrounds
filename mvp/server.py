@@ -44,6 +44,9 @@ API (v0.1 preserved, v0.2 additive):
   GET  /avatars/plushN.png              agent avatar images
   GET  /                               the dashboard
 """
+import copy
+import queue
+from decimal import Decimal
 import hashlib
 import json
 import math
@@ -63,7 +66,7 @@ STATE_PATH = os.environ.get("PLAYGROUNDS_STATE_PATH",
 DASHBOARD_PATH = os.path.join(ROOT, "dashboard.html")
 AVATAR_DIR = os.path.join(ROOT, "avatars")
 PORT = int(os.environ.get("PLAYGROUNDS_PORT", "8471"))
-MAX_AGENTS = 4  # research-backed team cap: small teams of 2-4 outperform larger ones
+MAX_AGENTS = 4  # pilot product limit; not a universal research result
 
 SCHEMA_VERSION = 2
 CLAIM_WINDOW = 300       # seconds a claim lease lasts without progress
@@ -107,6 +110,16 @@ def blank_state():
             "credits_are_non_cash": True,
         },
     }
+
+
+def credit_amount(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("credits must be a number")
+    if not math.isfinite(value) or not 0 <= value <= 100000000:
+        raise ValueError("credits must be finite, non-negative and <= 100000000")
+    if Decimal(str(value)) != Decimal(str(value)).quantize(Decimal("0.01")):
+        raise ValueError("credits support at most two decimal places")
+    return value
 
 
 def blank_agent_stats():
@@ -205,15 +218,11 @@ def emit(etype, data):
         state["events"] = state["events"][-EVENTS_CAP:]
         save_state()
         payload = f"data: {json.dumps(ev)}\n\n".encode()
-        dead = []
         for sub in list(subscribers):
             try:
-                sub.write(payload)
-                sub.flush()
-            except Exception:
-                dead.append(sub)
-        for d in dead:
-            subscribers.discard(d)
+                sub.put_nowait(payload)
+            except queue.Full:
+                subscribers.discard(sub)  # client reconnects and obtains current state
     return ev
 
 
@@ -322,7 +331,7 @@ def check_idempotency(key):
     with lock:
         rec = state["idempotency"].get(key)
         if rec and utcnow() - rec["ts"] < IDEMPOTENCY_TTL:
-            out = dict(rec["result"])
+            out = copy.deepcopy(rec["result"])
             out["deduplicated"] = True
             return out
         if rec:
@@ -334,7 +343,7 @@ def record_idempotency(key, result):
     if not key:
         return
     with lock:
-        state["idempotency"][key] = {"ts": utcnow(), "result": result}
+        state["idempotency"][key] = {"ts": utcnow(), "result": copy.deepcopy(result)}
         if len(state["idempotency"]) > 5000:
             oldest = sorted(state["idempotency"],
                             key=lambda k: state["idempotency"][k]["ts"])[:1000]
@@ -638,7 +647,8 @@ def playground_card():
                         "teams coordinate on shared goals with verified "
                         "outcomes and non-cash credits."),
         "version": "0.2.0",
-        "protocol": "a2a/0.2",
+        "protocol": "playgrounds-jsonrpc/0.2",
+        "a2a_compliant": False,
         "protocolBinding": "JSONRPC",
         "maxAgents": MAX_AGENTS,
         "registeredAgents": len(state["agents"]),
@@ -783,20 +793,24 @@ def publish_artifact(task_id, agent_id, kind, name, content, media_type,
     dup = check_idempotency(idempotency_key) if idempotency_key else None
     if dup:
         return dup
-    raw = (content or "").encode() if isinstance(content, str) else b""
+    if not isinstance(content, str) or len(content.encode()) > 20000:
+        return {"error": "artifact content must be text of at most 20000 UTF-8 bytes", "code": 400}
+    raw = content.encode()
     digest = "sha256:" + hashlib.sha256(raw).hexdigest()
     with lock:
         if task_id not in state["tasks"]:
             return {"error": "unknown task"}
         if agent_id not in state["agents"]:
             return {"error": "unknown agent"}
+        if state["tasks"][task_id]["status"] != "claimed":
+            return {"error": "artifacts require an active claimed task", "code": 409}
         aid = new_id("artifact")
         art = {"id": aid, "task_id": task_id, "agent_id": agent_id,
                "kind": kind or "result", "name": name or "artifact",
                "digest": digest, "size": len(raw),
                "media_type": media_type or "text/plain",
                "provenance": {"producer": agent_id, "at": utcnow()},
-               "content": content if isinstance(content, str) and len(raw) < 20000 else None,
+               "content": content,
                "created_at": utcnow()}
         state["artifacts"][aid] = art
         t = state["tasks"][task_id]
@@ -876,9 +890,9 @@ def run_deterministic_checks(task):
 
 
 def marginal_shares(task, artifact_scores):
-    """COMA-style leave-one-out: each contributor's share is the verified
-    utility lost if their work is held out. Near-duplicate work naturally
-    earns ~nothing. Solo tasks trivially give 1.0 to the worker."""
+    """Score-weighted pilot allocation, NOT measured counterfactual utility.
+    Duplicate discounting and causal contribution evaluation are not implemented.
+    """
     contributors = []
     for aid in task.get("artifact_ids", []):
         art = state["artifacts"].get(aid)
@@ -905,7 +919,7 @@ def marginal_shares(task, artifact_scores):
         rest = set(contributors) - {c}
         deltas[c] = max(0.0, value(set(contributors)) - value(rest))
     total = sum(deltas.values()) or 1.0
-    return [{"agent_id": c, "marginal": round(deltas[c] / total, 4)}
+    return [{"agent_id": c, "marginal": deltas[c] / total}
             for c in contributors]
 
 
@@ -921,8 +935,24 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
             return {"error": "unknown task", "code": 404}
         if task["status"] != "pending_verification":
             return {"error": "task not awaiting verification", "code": 409}
-        if verifier_agent_id and verifier_agent_id == task.get("agent_id"):
-            return {"error": "agents cannot verify their own work", "code": 403}
+        if not isinstance(approved, bool):
+            return {"error": "approved must be boolean", "code": 400}
+        if approved_credits is not None:
+            try:
+                credit_amount(approved_credits)
+            except ValueError as e:
+                return {"error": str(e), "code": 400}
+        contributors = {state["artifacts"][a]["agent_id"] for a in task.get("artifact_ids", [])
+                        if a in state["artifacts"]} | {task.get("agent_id")}
+        if verifier_agent_id and verifier_agent_id not in state["agents"]:
+            return {"error": "unknown verifier", "code": 404}
+        if verifier_agent_id and verifier_agent_id in contributors:
+            return {"error": "contributors cannot verify their own work", "code": 403}
+        if artifact_scores is not None:
+            if not isinstance(artifact_scores, dict) or any(
+                    isinstance(v, bool) or not isinstance(v, (int, float)) or
+                    not math.isfinite(v) or v < 0 for v in artifact_scores.values()):
+                return {"error": "artifact scores must be finite non-negative numbers", "code": 400}
         goal = state["goals"].get(task["goal_id"], {})
         escrow = task.get("escrow", 0)
         worker_id = task.get("agent_id")
@@ -939,7 +969,7 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
         # v0.1 had no deterministic gate and paid the worker in full.
         legacy = (approved_credits is not None and checks is None
                   and artifact_scores is None)
-        if blocking_failed and not legacy:
+        if blocking_failed:
             approved = False
 
         verifier = ({"type": "agent", "id": verifier_agent_id}
@@ -960,9 +990,6 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
             "contribution_scores": [],
             "issued_at": utcnow(),
         }
-        receipt["signature"] = ("stub:" + hashlib.sha256(
-            (json.dumps(receipt, sort_keys=True)
-             + state.get("server_salt", "")).encode()).hexdigest()[:32])
         task["verification_receipt"] = receipt
         task["verified_at"] = utcnow()
 
@@ -985,20 +1012,34 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
 
             shares = marginal_shares(task, artifact_scores or {})
             receipt["contribution_scores"] = shares
+            # Largest-remainder allocation in integer cents conserves the pool exactly.
+            cents = int(round(work_pool * 100))
+            weights = [max(0, x["marginal"]) for x in shares]
+            total_weight = sum(weights)
+            raw_cents = [cents * w / total_weight if total_weight else 0 for w in weights]
+            allocations = [math.floor(x) for x in raw_cents]
+            if total_weight:
+                order = sorted(range(len(shares)), key=lambda i: (-(raw_cents[i] - allocations[i]), shares[i]["agent_id"]))
+                for i in order[:cents - sum(allocations)]:
+                    allocations[i] += 1
             payouts = {}
-            for s in shares:
-                amt = round(work_pool * s["marginal"], 2)
-                ag = state["agents"].get(s["agent_id"])
+            for share, count in zip(shares, allocations):
+                aid = share["agent_id"]
+                ag = state["agents"].get(aid)
                 if ag:
-                    ag["credits"] = ag.get("credits", 0) + amt
-                payouts[s["agent_id"]] = amt
+                    amt = count / 100
+                    ag["credits"] = round(ag.get("credits", 0) + amt, 2)
+                    payouts[aid] = amt
+                    contributor_stats = state["agent_stats"].setdefault(aid, blank_agent_stats())
+                    contributor_stats["credits_earned"] = round(contributor_stats["credits_earned"] + amt, 2)
+            leftover = round(leftover + work_pool - sum(payouts.values()), 2)
             # review/integration pool: only to an eligible independent reviewer
             reviewer_paid = 0.0
             if (review_pool > 0 and verifier_agent_id
                     and verifier_agent_id != worker_id
                     and verifier_agent_id in state["agents"]):
                 ra = state["agents"][verifier_agent_id]
-                ra["credits"] = ra.get("credits", 0) + review_pool
+                ra["credits"] = round(ra.get("credits", 0) + review_pool, 2)
                 rst = state["agent_stats"].setdefault(verifier_agent_id,
                                                       blank_agent_stats())
                 rst["review_credits_earned"] += review_pool
@@ -1009,10 +1050,8 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
             goal["budget_available"] = round(
                 goal.get("budget_available", 0) + leftover, 2)
             goal["budget_spent"] = round(
-                goal.get("budget_spent", 0) + paid_total, 2)
+                goal.get("budget_spent", 0) + sum(payouts.values()) + reviewer_paid, 2)
             st["verified"] += 1
-            st["credits_earned"] = round(
-                st["credits_earned"] + sum(payouts.values()), 2)
 
             settlement = {
                 "settlement_id": new_id("settle"),
@@ -1021,7 +1060,7 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
                 "review_pool": review_pool, "reviewer_paid": reviewer_paid,
                 "leftover_to_budget": leftover, "payouts": payouts,
                 "shares": shares,
-                "rationale": ("marginal-contribution split of the work pool; "
+                "rationale": ("score-weighted pilot split of the work pool; "
                               "review pool to independent verifier or budget"),
                 "issued_at": utcnow(),
             }
@@ -1040,6 +1079,8 @@ def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None
             st["rejected"] += 1
             outcome, q = "rejected", quality
 
+        receipt["signature"] = "stub:" + hashlib.sha256(
+            (json.dumps(receipt, sort_keys=True) + state.get("server_salt", "")).encode()).hexdigest()[:32]
         task["escrow"] = 0
         task["claim_expires"] = 0
         task["lease"] = {"holder": None, "expires": 0, "last_progress_at": 0}
@@ -1153,8 +1194,18 @@ def create_task(goal_id, body, actor="human"):
     with lock:
         if goal_id not in state["goals"]:
             return None, {"error": "unknown goal", "code": 404}
+        try:
+            credit_amount(body.get("bounty", 10))
+        except ValueError as e:
+            return None, {"error": str(e), "code": 400}
+        dependencies = body.get("dependencies", [])
+        if not isinstance(dependencies, list) or any(not isinstance(d, str) or
+                d not in state["tasks"] or state["tasks"][d]["goal_id"] != goal_id for d in dependencies):
+            return None, {"error": "dependencies must reference existing tasks in this goal", "code": 400}
         tid = new_id("task")
         plan_id = body.get("plan_id")
+        if plan_id and (plan_id not in state["plans"] or state["plans"][plan_id]["goal_id"] != goal_id):
+            return None, {"error": "plan must belong to this goal", "code": 400}
         task = {
             "id": tid, "goal_id": goal_id, "plan_id": plan_id,
             "title": body.get("title", "Untitled task"),
@@ -1213,12 +1264,52 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get("Content-Length", 0) or 0)
+        if n < 0 or n > 262144:
+            raise ValueError("request body limit is 256 KiB")
         if not n:
             return {}
-        return json.loads(self.rfile.read(n) or b"{}")
+        return json.loads(self.rfile.read(n) or b"{}", parse_constant=lambda v: (_ for _ in ()).throw(ValueError("non-finite JSON number")))
+
+    def _allowed_host(self):
+        return urlparse("http://" + self.headers.get("Host", "")).hostname in ("localhost", "127.0.0.1", "::1")
+
+    def do_POST(self):
+        if not self._allowed_host():
+            return self._send(403, {"error": "loopback Host required"})
+        origin = self.headers.get("Origin")
+        if origin and origin != "http://" + self.headers.get("Host", ""):
+            return self._send(403, {"error": "cross-origin writes forbidden"})
+        try:
+            if self.headers.get_content_type() != "application/json":
+                return self._send(415, {"error": "application/json required"})
+            body = self._body()
+            if not isinstance(body, dict):
+                raise ValueError("JSON object required")
+            for field in ("budget", "bounty", "approved_credits"):
+                if field in body and body[field] is not None:
+                    credit_amount(body[field])
+            if "review_pool_pct" in body:
+                v = body["review_pool_pct"]
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1:
+                    raise ValueError("review_pool_pct must be between 0 and 1")
+            # Scope retry keys to operation and exact payload; never replay another task's response.
+            key = body.get("idempotency_key")
+            if key:
+                if not isinstance(key, str) or len(key) > 256:
+                    raise ValueError("invalid idempotency key")
+                body["idempotency_key"] = hashlib.sha256(
+                    (self.path + json.dumps(body, sort_keys=True)).encode()).hexdigest()
+            self._request_body = body
+            with lock:
+                sweep_expired_claims()
+                self._post()
+        except (ValueError, TypeError, UnicodeError) as e:
+            return self._send(400, {"error": str(e)})
 
     # ---------- GET ----------
     def do_GET(self):
+        if not self._allowed_host():
+            return self._send(403, {"error": "loopback Host required"})
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
         if parsed.path == "/":
@@ -1237,7 +1328,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, f.read(), "image/png")
         elif parsed.path == "/api/state":
             with lock:
-                self._send(200, state)
+                self._send(200, {k: v for k, v in state.items() if k not in ("server_salt", "idempotency")})
         elif parsed.path == "/api/policy":
             with lock:
                 self._send(200, state["policy"])
@@ -1261,22 +1352,30 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
+            sub = queue.Queue(maxsize=256)
             try:
                 with lock:
-                    for ev in state["events"]:
-                        if ev["seq"] > since:
-                            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-                    self.wfile.flush()
-                    subscribers.add(self.wfile)
+                    replay = [ev for ev in state["events"] if ev["seq"] > since]
+                    subscribers.add(sub)
+                self.connection.settimeout(20)
+                for ev in replay:
+                    self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                self.wfile.flush()
                 while True:
-                    time.sleep(15)
-                    self.wfile.write(b": ping\n\n")
+                    try:
+                        payload = sub.get(timeout=15)
+                    except queue.Empty:
+                        with lock:
+                            if sub not in subscribers:
+                                break
+                        payload = b": ping\n\n"
+                    self.wfile.write(payload)
                     self.wfile.flush()
-            except Exception:
+            except (OSError, TimeoutError):
                 pass
             finally:
                 with lock:
-                    subscribers.discard(self.wfile)
+                    subscribers.discard(sub)
         elif parsed.path == "/api/messages":
             qs = parse_qs(parsed.query)
             since = int(qs.get("since", [0])[0])
@@ -1377,10 +1476,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
 # ---------- POST ----------
-    def do_POST(self):
+    def _post(self):
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
-        body = self._body()
+        body = self._request_body
 
         if parts == ["api", "agents", "register"]:
             with lock:
@@ -1503,6 +1602,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "unknown task"})
                 if task["status"] != "needs_input":
                     return self._send(409, {"error": "task is not awaiting clarification"})
+                if not isinstance(body.get("success_criteria"), str) or not body["success_criteria"].strip():
+                    return self._send(400, {"error": "non-empty success_criteria required"})
                 if body.get("success_criteria"):
                     task["success_criteria"] = body["success_criteria"]
                 if body.get("input_contract"):
@@ -1541,6 +1642,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "unknown agent"})
                 if task["status"] != "open":
                     return self._send(409, {"error": f"task is {task['status']}"})
+                if any(state["tasks"].get(d, {}).get("status") != "done" for d in task.get("dependencies", [])):
+                    return self._send(409, {"error": "dependencies not completed"})
+                # A new attempt must not inherit rejected artifacts or progress.
+                task["artifact_ids"] = []
+                task["progress"] = []
+                task["stall_count"] = 0
+                task["verification_receipt"] = None
+                task["settlement_receipt"] = None
                 goal = state["goals"].get(task["goal_id"], {})
                 bounty = task.get("bounty", 10)
                 if bounty > goal.get("budget_available", 0):
@@ -1603,7 +1712,7 @@ class Handler(BaseHTTPRequestHandler):
                                    body.get("media_type"),
                                    body.get("idempotency_key"))
             if res.get("error"):
-                return self._send(404, res)
+                return self._send(res.get("code", 404), res)
             return self._send(200, res)
 
         if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "complete":

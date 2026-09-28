@@ -304,7 +304,7 @@ class Unit(unittest.TestCase):
     def test_playground_card(self):
         mk_agent()
         card = srv.playground_card()
-        self.assertEqual(card["protocol"], "a2a/0.2")
+        self.assertEqual(card["protocol"], "playgrounds-jsonrpc/0.2")
         self.assertEqual(card["maxAgents"], 4)
         self.assertEqual(card["registeredAgents"], 1)
 
@@ -314,7 +314,7 @@ class Unit(unittest.TestCase):
 def http(method, path, data=None, port=8479):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}", method=method,
-        data=json.dumps(data or {}).encode(),
+        data=None if method == "GET" else json.dumps(data or {}).encode(),
         headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -470,7 +470,7 @@ class Integration(unittest.TestCase):
                           {"jsonrpc": "2.0", "id": 1, "method": "card/get",
                            "params": {}})
         self.assertEqual(code, 200)
-        self.assertEqual(card["result"]["protocol"], "a2a/0.2")
+        self.assertEqual(card["result"]["protocol"], "playgrounds-jsonrpc/0.2")
         code, sent = http("POST", "/a2a",
                           {"jsonrpc": "2.0", "id": 2, "method": "task/send",
                            "params": {"goal_id": self.gid,
@@ -503,7 +503,7 @@ class Integration(unittest.TestCase):
     def test_07_sse_streams(self):
         import socket
         s = socket.create_connection(("127.0.0.1", 8479), timeout=10)
-        s.sendall(b"GET /api/events?since=0 HTTP/1.0\r\n\r\n")
+        s.sendall(b"GET /api/events?since=0 HTTP/1.0\r\nHost: 127.0.0.1:8479\r\n\r\n")
         s.settimeout(5)
         data = s.recv(4096)
         s.close()
