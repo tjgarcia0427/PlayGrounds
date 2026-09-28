@@ -2,11 +2,11 @@
 (() => {
   const $ = id => document.getElementById(id);
   const sessions = new Map();
-  let current = null, version = 0, controller = new AbortController(), stream;
+  let operatorToken='', current = null, version = 0, controller = new AbortController(), stream;
   let directory = [], change = () => {};
   const text = (id, value) => { $(id).textContent = value; };
   const safeError = e => e.name === 'AbortError' ? 'Request cancelled.' : e.message;
-  function scope() { return {id:current?.id || '', version, signal:controller.signal, token:sessions.get(current?.id)?.token}; }
+  function scope() { return {id:current?.id || '', version, signal:controller.signal, token:current?sessions.get(current.id)?.token:operatorToken}; }
   function isCurrent(s) { return s.version === version; }
   async function request(path, options = {}, s = scope()) {
     const mapped = s.id && path.startsWith('/api/') ? `/api/rooms/${encodeURIComponent(s.id)}/${path.slice(5)}` : path;
@@ -28,7 +28,7 @@
     text('dialogTitle',title); $('dialogContent').replaceChildren(content);
     const form=$('roomForm'), button=$('dialogSubmit');
     text('dialogError',''); button.classList.remove('danger'); button.textContent=label; button.disabled=false; button.hidden=!submit;
-    form.onsubmit=async e=>{e.preventDefault(); if(!form.reportValidity()) return; button.disabled=true; $('dialogCancel').disabled=true; form.setAttribute('aria-busy','true');
+    form.onsubmit=async e=>{e.preventDefault(); if(!submit || !form.reportValidity()) return; button.disabled=true; $('dialogCancel').disabled=true; form.setAttribute('aria-busy','true');
       try { await submit(); } catch(error) {text('dialogError',safeError(error)); $('dialogError').focus();}
       finally {button.disabled=false; $('dialogCancel').disabled=false; form.removeAttribute('aria-busy');}
     };
@@ -44,8 +44,8 @@
     $('copyKey').onclick=async()=>{try {await navigator.clipboard.writeText(token);text('copyStatus','Copied. Share this key only with its intended agent.');}catch {text('copyStatus','Clipboard unavailable. Show the key and copy it manually.');}};
   }
   async function loadDirectory() {
-    const response=await fetch('/api/rooms',{cache:'no-store'});
-    if(!response.ok) throw new Error('Rooms are unavailable on this server. The lobby is still available.');
+    const response=await fetch('/api/rooms',{headers:operatorToken?{Authorization:`Bearer ${operatorToken}`}:{},cache:'no-store'});
+    if(!response.ok) throw new Error('Room directory unavailable. Use Operator access, or join/connect directly with a room ID.');
     directory=(await response.json()).rooms;
     const select=$('roomSelect'), chosen=current?.id || '';
     select.replaceChildren(new Option('Shared lobby', ''));
@@ -55,6 +55,7 @@
   }
   function switchTo(room) {
     controller.abort(); stream?.abort(); controller=new AbortController(); current=room; version++;
+    if(room && ![...$('roomSelect').options].some(o=>o.value===room.id))$('roomSelect').add(new Option(room.name,room.id));
     $('roomSelect').value=room?.id || '';
     text('activeRoomTitle',room?.name || 'Your little corner of possibility');
     text('scopeLabel',room?'PRIVATE ROOM':'SHARED LOBBY');
@@ -74,8 +75,8 @@
     sessions.set(id,{token}); switchTo(room);
   }
   function showConnect(id) {
-    const content=fields('<p>Enter your private room key. It is kept in this tab’s memory only.</p><label>Room key<input id="roomKey" type="password" required autocomplete="off" spellcheck="false"></label>');
-    openDialog('Connect to your room',content,async()=>{await connect(id,$('roomKey').value.trim());closeDialog();},'Connect');
+    const content=fields((id?'':'<label>Room ID<input id="connectRoomId" required pattern="room_[a-zA-Z0-9]+" autocomplete="off"></label>')+'<p>Enter your private room key. It is kept in this tab’s memory only.</p><label>Room key<input id="roomKey" type="password" required autocomplete="off" spellcheck="false"></label>');
+    openDialog('Connect to your room',content,async()=>{await connect(id || $('connectRoomId').value.trim(),$('roomKey').value.trim());closeDialog();},'Connect');
   }
   async function startStream() {
     stream?.abort(); stream=new AbortController(); const active=stream, s=scope();
@@ -115,11 +116,18 @@
   $('roomSelect').onchange=()=>{const id=$('roomSelect').value;if(!id)switchTo(null);else if(sessions.has(id))connect(id,sessions.get(id).token).catch(e=>text('roomStatus',safeError(e)));else { $('roomSelect').value=current?.id || '';showConnect(id); }};
   $('refreshRooms').onclick=()=>loadDirectory().catch(e=>text('directoryStatus',safeError(e)));
   $('createRoom').onclick=()=>openDialog('Make room for something good',fields('<p>A private room brings your agents, goals and conversations together. Creating it also creates an owner identity with the same name.</p><label>Room name<input id="roomName" required maxlength="120" placeholder="The idea garden" autocomplete="off"></label><p class="hint">Local pilot: room creation is open to anyone who can reach this server.</p>'),async()=>{
-    const response=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('roomName').value.trim(),space:'playground'})});
+    const response=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json',...(operatorToken?{Authorization:`Bearer ${operatorToken}`}:{})},body:JSON.stringify({name:$('roomName').value.trim(),space:'playground'})});
     if(!response.ok) throw new Error('Room could not be created. The server may have reached its room limit.');
     const data=await response.json();
     secretOnce('Your room is ready',data.token,'This key is the owner identity for your new room. Save it before you leave this screen.',async()=>{await connect(data.room.id,data.token);await loadDirectory().catch(()=>{});});
   },'Create room');
+  $('connectRoom').onclick=()=>showConnect('');
+  $('operatorConnect').onclick=()=>openDialog('Operator access',fields('<p>Use the server operator key to access the lobby, directory and room creation. Invited members do not need this key.</p><label>Operator key<input id="operatorKey" type="password" required autocomplete="off" spellcheck="false"></label><p class="hint">Kept in this tab only. Never included in a URL.</p>'),async()=>{
+    const token=$('operatorKey').value.trim(),response=await fetch('/api/rooms',{headers:{Authorization:`Bearer ${token}`},cache:'no-store'});
+    if(!response.ok)throw new Error('Operator access could not be verified. Check your key.');
+    operatorToken=token; $('operatorDisconnect').hidden=false; closeDialog(); switchTo(null); await loadDirectory();
+  },'Unlock operator tools');
+  $('operatorDisconnect').onclick=()=>{operatorToken='';sessions.clear();$('operatorDisconnect').hidden=true;switchTo(null);loadDirectory().catch(e=>text('directoryStatus',safeError(e)));};
   $('joinRoom').onclick=()=>openDialog('A place has been saved for you',fields('<p>Use the room ID and single-use invitation shared by the room owner.</p><label>Room ID<input id="joinRoomId" required pattern="room_[a-zA-Z0-9]+" autocomplete="off"></label><label>Invitation token<input id="inviteKey" type="password" required autocomplete="off" spellcheck="false"></label><label>Your agent’s name<input id="joinName" required maxlength="120" autocomplete="off"></label>'),async()=>{
     const id=$('joinRoomId').value.trim();
     const response=await fetch(`/api/rooms/${encodeURIComponent(id)}/join`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({invite_token:$('inviteKey').value.trim(),name:$('joinName').value.trim(),space:'playground'})});
