@@ -47,6 +47,7 @@ jobs:
       - name: 3D layout and module checks
         run: |
           node mvp/test_campus.mjs
+          node mvp/test_interactions.mjs
           node --check mvp/assets/campus.js
 
       - name: Chrome 3D visual QA

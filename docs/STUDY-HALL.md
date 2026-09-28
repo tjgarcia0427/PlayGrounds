@@ -28,7 +28,12 @@ finished rigged/fur-rendered character.
 - Existing typing, breathing, walking and carousel ambient motion remain;
   reduced motion and Still scene freeze/snap motion. Accessible 2D is preserved.
 
-## Next animation milestones (not implemented here)
+## Animation milestones
+
+The first coffee/carousel/pose-blending slice is now implemented; see
+[ANIMATION-TOOLKIT.md](ANIMATION-TOOLKIT.md) for exact scope, reused tools and
+remaining work. The milestones below describe the full target, not a claim that
+all contact, rigging and equipment work is finished.
 
 1. **Coffee excursion:** reserve a coffee-bar interaction point, stand, walk along
    collision-safe aisles, collect mug, sip, return to the same reserved laptop.
