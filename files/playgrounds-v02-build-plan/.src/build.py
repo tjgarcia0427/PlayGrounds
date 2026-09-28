@@ -1,0 +1,817 @@
+from pathlib import Path
+
+out = Path.home()/"workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/index.html"
+html = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playgrounds v0.2 Build Plan</title>
+<style>
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+:root{
+  --ink:#14213d; --muted:#5d6778; --paper:#fbfaf7; --line:#d8ddd9;
+  --navy:#101c37; --teal:#1b8a87; --teal2:#dff3ef; --amber:#e2a03f;
+  --rose:#c95f67; --blue:#4169a8; --soft:#eef1f4; --white:#ffffff;
+}
+html,body{margin:0;padding:0;background:#e9ecef;color:var(--ink);font-family:'Noto Sans','Liberation Sans',sans-serif;font-size:10pt;line-height:1.42;}
+a{color:#176f73;text-decoration:none;border-bottom:.4pt solid #8cc3c2;}
+.page{width:210mm;height:297mm;min-height:297mm;padding:17mm 18mm 15mm;background:var(--paper);position:relative;overflow:hidden;page-break-after:always;}
+.page:last-child{page-break-after:auto;}
+.cover{background:var(--navy);color:white;padding:22mm 22mm 18mm;}
+.cover:before{content:"";position:absolute;right:4mm;top:4mm;width:92mm;height:92mm;border:1.2mm solid rgba(55,201,187,.28);border-radius:50%;}
+.cover:after{content:"";position:absolute;right:18mm;top:20mm;width:58mm;height:58mm;border:1px solid rgba(255,255,255,.18);transform:rotate(18deg);}
+.topline{font-size:8.5pt;letter-spacing:.16em;text-transform:uppercase;color:var(--teal);font-weight:700;margin-bottom:7mm;}
+.cover .topline{color:#6de0d6;}
+h1{font-family:'Noto Serif','Liberation Serif',serif;font-size:34pt;line-height:1.02;margin:0 0 6mm;letter-spacing:-.02em;max-width:140mm;}
+.cover .dek{font-size:15pt;line-height:1.35;max-width:135mm;color:#dce5f2;margin:0 0 13mm;}
+.cover .decision{border-left:1.4mm solid #53c8bc;padding:4mm 0 4mm 5mm;max-width:150mm;font-size:11pt;color:#f6f8fb;margin:10mm 0;}
+.cover .snapshot{position:absolute;left:22mm;right:22mm;bottom:25mm;display:grid;grid-template-columns:repeat(4,1fr);gap:5mm;}
+.cover .stat{padding-top:3mm;border-top:.6pt solid rgba(255,255,255,.28);}
+.cover .stat b{display:block;font-size:17pt;color:#76ded4;line-height:1.1;}
+.cover .stat span{font-size:8pt;color:#bfc9d8;}
+.cover .stamp{position:absolute;bottom:11mm;left:22mm;color:#94a2b8;font-size:8pt;letter-spacing:.08em;text-transform:uppercase;}
+.header{display:flex;justify-content:space-between;align-items:center;border-bottom:.6pt solid var(--line);padding-bottom:3mm;margin-bottom:7mm;font-size:8pt;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;}
+.header b{color:var(--teal);}
+.page-no{position:absolute;right:18mm;bottom:8mm;font-size:8pt;color:#7b8493;}
+h2{font-family:'Noto Serif','Liberation Serif',serif;font-size:23pt;line-height:1.1;letter-spacing:-.01em;margin:0 0 5mm;color:var(--navy);}
+h3{font-size:11.5pt;line-height:1.25;margin:5mm 0 2mm;color:var(--navy);}
+p{margin:0 0 3.2mm;}
+.lede{font-size:12.4pt;line-height:1.45;color:#303c52;max-width:160mm;margin-bottom:7mm;}
+.rule{height:1mm;width:20mm;background:var(--teal);margin:0 0 6mm;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6mm;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm;}
+.card{background:white;border:1px solid var(--line);border-radius:3mm;padding:4mm;break-inside:avoid;}
+.card h3{margin-top:0;}
+.card.tint{background:var(--teal2);border-color:#b7dcd6;}
+.callout{border-left:1.2mm solid var(--teal);background:#edf7f5;padding:4mm 5mm;margin:5mm 0;}
+.warn{border-left-color:var(--amber);background:#fff6e7;}
+.danger{border-left-color:var(--rose);background:#fbecee;}
+ul,ol{margin:2mm 0 4mm;padding-left:5mm;} li{margin:0 0 2mm;} li::marker{color:var(--teal);font-weight:700;}
+.tight li{margin-bottom:1mm;}
+.kicker{font-size:8pt;color:var(--teal);font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-bottom:1mm;}
+.metric{font-size:23pt;font-weight:700;line-height:1;color:var(--teal);margin-bottom:1mm;}
+.small{font-size:8.6pt;color:var(--muted);line-height:1.35;}
+.note{font-size:8.4pt;color:var(--muted);}
+strong{color:#0f2a48;}
+code{font-family:'Liberation Mono',monospace;font-size:8.3pt;color:#21334d;background:#eef1f4;padding:.2mm .8mm;border-radius:1mm;}
+pre{font-family:'Liberation Mono',monospace;font-size:8.1pt;line-height:1.38;white-space:pre-wrap;background:#101b32;color:#dce6f5;padding:4mm;border-radius:3mm;margin:3mm 0 5mm;break-inside:avoid;}
+table{width:100%;border-collapse:collapse;margin:3mm 0 5mm;font-size:8.6pt;line-height:1.3;break-inside:avoid;}
+th{text-align:left;background:var(--navy);color:white;padding:2.4mm 2.6mm;font-weight:700;}
+td{padding:2.4mm 2.6mm;border-bottom:.5pt solid var(--line);vertical-align:top;} tr:nth-child(even) td{background:#f2f4f4;}
+.phase{display:grid;grid-template-columns:16mm 1fr 28mm;gap:4mm;padding:3.2mm 0;border-bottom:.6pt solid var(--line);align-items:start;}
+.phase .num{height:11mm;width:11mm;border-radius:50%;background:var(--navy);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;}
+.phase .gate{font-size:8pt;color:var(--teal);font-weight:700;text-align:right;}
+.flow{display:grid;grid-template-columns:1fr 10mm 1fr 10mm 1fr;align-items:center;gap:2mm;margin:5mm 0;}
+.flow .node{background:white;border:1px solid var(--line);border-top:1.4mm solid var(--teal);border-radius:3mm;padding:4mm;text-align:center;min-height:29mm;}
+.flow .arrow{text-align:center;color:var(--teal);font-size:18pt;font-weight:700;}
+.arch{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:5mm;margin:4mm 0;align-items:stretch;}
+.arch .col{display:flex;flex-direction:column;gap:3mm;}
+.arch .box{background:white;border:1px solid var(--line);border-radius:3mm;padding:3.5mm;min-height:20mm;}
+.arch .core{background:var(--navy);color:white;border-color:var(--navy);}
+.arch .core strong{color:#6de0d6;}
+.arch .box b{display:block;margin-bottom:1mm;}
+.badge{display:inline-block;border-radius:10mm;background:#e8f4f2;color:#176f73;padding:1mm 2.5mm;font-size:8pt;font-weight:700;margin:0 1mm 1mm 0;}
+.badge.amber{background:#fff0d5;color:#9a6112;}.badge.red{background:#fae3e5;color:#9b3740;}.badge.blue{background:#e7eef9;color:#315689;}
+.checklist{display:grid;grid-template-columns:8mm 1fr;gap:2.5mm 3mm;align-items:start;margin:3mm 0;}
+.check{width:5mm;height:5mm;border:1px solid #96a1b0;border-radius:1mm;margin-top:.4mm;background:white;}
+.source{font-size:8.2pt;line-height:1.35;padding:2mm 0;border-bottom:.5pt solid var(--line);}
+.source b{display:inline-block;width:6mm;color:var(--teal);}
+.footer-note{position:absolute;left:18mm;bottom:8mm;font-size:8pt;color:#8b93a0;}
+.route-page .lede{margin-bottom:4mm;}
+.route-page h3{margin:3mm 0 1.5mm;}
+.route-page .card{padding:2.7mm;}
+.route-page pre{margin:2mm 0 3mm;padding:3mm;}
+.route-page .phase{padding:2mm 0;grid-template-columns:13mm 1fr 25mm;gap:3mm;}
+.route-page .phase .num{height:9mm;width:9mm;}
+.route-page .callout{margin:3mm 0;padding:3mm 4mm;}
+.mono{font-family:'Liberation Mono',monospace;}
+.current-page .lede{font-size:11.8pt;margin-bottom:4mm;}
+.current-page table{font-size:8.3pt;line-height:1.2;margin:2mm 0 3mm;}
+.current-page th,.current-page td{padding:1.6mm 2mm;}
+.current-page .card{padding:3mm;}
+.current-page .callout{margin:3mm 0;padding:3mm 4mm;}
+.topology-page .callout{margin:2mm 0;padding:2.6mm 4mm;}
+.topology-page table{font-size:8.2pt;line-height:1.18;margin:2mm 0 3mm;}
+.topology-page th,.topology-page td{padding:1.5mm 2mm;}
+.topology-page h3{margin:3mm 0 1.5mm;}
+.topology-page .card{padding:2.7mm;}
+.topology-page pre{margin:2mm 0 2mm;padding:2.7mm;line-height:1.28;}
+.done-page h3{margin:3.5mm 0 1.5mm;}
+.done-page .checklist{gap:2mm 3mm;margin:2mm 0;}
+.done-page .callout{margin:3mm 0;padding:3mm 4mm;}
+.avatar-page .lede{font-size:11.4pt;line-height:1.35;margin-bottom:4mm;}
+.avatar-page .card{padding:3mm;}
+.avatar-page .card h3{margin:2mm 0 1.5mm;}
+.avatar-page ul{margin:1mm 0 2mm;padding-left:4.5mm;}
+.avatar-page li{margin-bottom:1mm;}
+.avatar-page h3{margin:3mm 0 1.5mm;}
+.avatar-page .phase{padding:2mm 0;grid-template-columns:13mm 1fr 26mm;gap:3mm;}
+.avatar-page .phase .num{height:9mm;width:9mm;}
+.avatar-page .callout{margin:3mm 0;padding:3mm 4mm;}
+@media print{body{background:white;}}
+</style>
+</head>
+<body>
+
+<section class="page cover">
+  <div class="topline">Playgrounds / product & engineering plan / v0.2</div>
+  <h1>Build coordination that earns its complexity</h1>
+  <p class="dek">A concrete plan for central orchestration, A2A-style Agent Cards, learned routing, verified outputs, deadbanded reputation, and marginal-contribution credits.</p>
+  <div class="decision"><strong style="color:white">Decision:</strong> keep the working v0.1 core, make solo execution the default, and enforce a standing ceiling of four registered agents per playground. The avatar layer follows the platform refinements, not before them.</div>
+  <div class="snapshot">
+    <div class="stat"><b>1</b><span>control-plane orchestrator</span></div>
+    <div class="stat"><b>4</b><span>hard cap · already enforced</span></div>
+    <div class="stat"><b>8</b><span>research rules implemented</span></div>
+    <div class="stat"><b>0</b><span>public exposure before trust gates</span></div>
+  </div>
+  <div class="stamp">Prepared 27 September 2026 · Build target: private v0.2 pilot</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Executive decision</b><span>Playgrounds v0.2</span></div>
+  <h2>Make collaboration conditional, measured, and reversible</h2>
+  <div class="rule"></div>
+  <p class="lede">v0.2 is not “more agents.” It is a control system that selects the cheapest reliable topology for each task, records why it made that choice, verifies the result, and learns from the outcome.</p>
+  <div class="grid2">
+    <div class="card tint">
+      <div class="kicker">Build now</div>
+      <h3>One orchestrator owns the shared truth</h3>
+      <ul>
+        <li>A durable <strong>task ledger</strong> holds the plan, constraints, dependencies, and acceptance criteria.</li>
+        <li>An append-only <strong>progress ledger</strong> records assignments, evidence, stalls, decisions, and replans.</li>
+        <li>Workers receive bounded task envelopes and return structured artifacts, not unbounded group-chat prose.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="kicker">Change the default</div>
+      <h3>Solo first; fan out only on evidence</h3>
+      <ul>
+        <li>Every task starts with a solo candidate.</li>
+        <li>Parallelism requires high decomposability, low dependency coupling, and a positive expected utility after coordination cost.</li>
+        <li>Each playground has four registered agent slots, enforced at registration; the control-plane orchestrator is not a hidden fifth participant.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout">
+    <strong>Research boundary.</strong> In a matched-compute study of 260 configurations, multi-agent performance ranged from +80.8% on decomposable financial reasoning to -70.0% on sequential planning. The reviewed evidence favors tightly scoped 2–4-agent teams over larger, coordination-heavy groups; centralized verification also contained error propagation better than independent aggregation. [1][5]
+  </div>
+  <h3>v0.2 release outcome</h3>
+  <p>A private pilot can accept a goal, decompose it into typed tasks, discover agents by Agent Card, choose solo or a small specialist team, stream ledger events, collect typed artifacts, run deterministic and human verification, settle internal credits, and update capability-specific routing and reputation models.</p>
+  <h3>Explicitly out of scope</h3>
+  <div class="grid3">
+    <div class="card"><strong>Public marketplace</strong><br><span class="small">No anonymous discovery or open enrollment.</span></div>
+    <div class="card"><strong>Cash redemption</strong><br><span class="small">Credits remain non-cash internal accounting.</span></div>
+    <div class="card"><strong>Avatar implementation</strong><br><span class="small">Define the workstream now; animate only after platform refinements.</span></div>
+  </div>
+  <div class="page-no">2</div>
+</section>
+
+<section class="page current-page">
+  <div class="header"><b>Starting point</b><span>Preserve what already works</span></div>
+  <h2>v0.1 is a usable substrate, not a throwaway prototype</h2>
+  <p class="lede">The current Python service, 2D dashboard, JSON state, Server-Sent Events (SSE), 16-tool MCP adapter, escrow flow, and test harness already prove the lifecycle. v0.2 should evolve those contracts without breaking existing local clients.</p>
+  <table>
+    <thead><tr><th>v0.1 surface</th><th>Keep</th><th>Replace or add in v0.2</th></tr></thead>
+    <tbody>
+      <tr><td>Goal + task board</td><td>IDs, lifecycle, events</td><td>Dependencies, task type, success criteria, input/output contracts</td></tr>
+      <tr><td>Agent registration</td><td><code>MAX_AGENTS=4</code>; HTTP 409 when full; dashboard shows slots used</td><td>Preserve as a standing invariant across REST, MCP, A2A, imports, and migrations</td></tr>
+      <tr><td>Heartbeat + status</td><td>Idle / working / blocked</td><td>Leases, last progress, stall detection, cancellation</td></tr>
+      <tr><td>Human verification</td><td>No self-review; partial payout</td><td>Rubrics, deterministic checks, evidence receipts, verifier confidence</td></tr>
+      <tr><td>Escrow credits</td><td>Budget reservation and refunds</td><td>Contribution shares, verifier fee, immutable settlement entries</td></tr>
+      <tr><td><code>suggest_agents()</code></td><td>Explainable ranked output</td><td>Outcome-trained utility estimates; model names become metadata</td></tr>
+      <tr><td>MCP stdio adapter</td><td>Existing 16 tools</td><td>Thin compatibility layer; A2A adapter for agent-to-agent tasks</td></tr>
+      <tr><td>Shared context + messages</td><td>Goal-scoped state</td><td>Typed records, provenance, ACLs; chat is never authoritative state</td></tr>
+      <tr><td><code>state.json</code></td><td>Portable local demo</td><td>Versioned event schema now; SQLite/Postgres boundary before pilot</td></tr>
+    </tbody>
+  </table>
+  <div class="grid2">
+    <div class="card">
+      <div class="kicker">Migration rule</div>
+      <h3>Dual-read, single-write</h3>
+      <p>Read v0.1 records during migration, but write only v0.2 schemas. A one-time migration emits canonical ledger events and retains the original JSON as a read-only backup.</p>
+    </div>
+    <div class="card">
+      <div class="kicker">Compatibility rule</div>
+      <h3>Adapters stay thin</h3>
+      <p>REST, MCP, and A2A translate into one internal command model. Business rules live in the core, not in connector-specific handlers.</p>
+    </div>
+  </div>
+  <div class="callout warn"><strong>Do not extend the current model-tier table.</strong> Declared model strings are not evidence of task fit. Keep them for observability and cold-start priors only; route on verified outcomes as soon as data exists.</div>
+  <div class="page-no">3</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Research to product</b><span>Eight implications · 1 of 2</span></div>
+  <h2>The research becomes operating rules, not decoration</h2>
+  <p class="lede">Each implication below maps to a visible system behavior and a testable gate.</p>
+  <div class="card">
+    <div class="kicker">Rule 1</div>
+    <h3>Start with one agent</h3>
+    <p><strong>Behavior:</strong> The topology selector evaluates <code>solo</code> first. Multi-agent execution must beat a solo baseline on expected verified utility after cost and latency.</p>
+    <p class="small"><strong>Gate:</strong> no task may fan out without recorded decomposability, coupling, budget, and expected-uplift fields.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 2</div>
+    <h3>Use a central orchestrator</h3>
+    <p><strong>Behavior:</strong> One lead owns plan, assignment, state transitions, integration, stopping, and replan. Workers do not mutate the global plan.</p>
+    <p class="small"><strong>Gate:</strong> every state transition has one authoritative actor, previous version, and idempotency key.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 3</div>
+    <h3>Move facts through ledgers and artifacts</h3>
+    <p><strong>Behavior:</strong> Messages can notify, but decisions, evidence, blockers, and outputs become typed records. The system can replay a run without reading free-form chat.</p>
+    <p class="small"><strong>Gate:</strong> 100% of completed tasks have a valid output contract and at least one immutable artifact or explicit “no artifact” result.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 4</div>
+    <h3>Learn routing from outcomes</h3>
+    <p><strong>Behavior:</strong> Estimate acceptance, quality, latency, and credit cost per task-agent pair. A transparent utility function chooses candidates; static tiers only seed cold start.</p>
+    <p class="small"><strong>Gate:</strong> the learned router must win a held-out comparison against v0.1 before it controls assignments.</p>
+  </div>
+  <div class="footer-note">Evidence: architecture-task alignment [1], routing from preference data [6], structured delegation [5].</div>
+  <div class="page-no">4</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Research to product</b><span>Eight implications · 2 of 2</span></div>
+  <h2>Trust and economics share the same evidence spine</h2>
+  <div class="card">
+    <div class="kicker">Rule 5</div>
+    <h3>Verification is a first-class workflow</h3>
+    <p><strong>Behavior:</strong> Deterministic checks run before judgment. Reviewers receive the task contract, artifacts, provenance, and check results. High-risk work requires a human.</p>
+    <p class="small"><strong>Gate:</strong> no payout, reputation change, or router label exists without a verification receipt.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 6</div>
+    <h3>Reputation updates only outside a deadband</h3>
+    <p><strong>Behavior:</strong> Maintain capability-specific posterior scores. Ambiguous, low-confidence, or weakly attributable outcomes are recorded but do not move reputation.</p>
+    <p class="small"><strong>Gate:</strong> one low-confidence rejection cannot materially change an established agent’s score.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 7</div>
+    <h3>Credits follow marginal verified contribution</h3>
+    <p><strong>Behavior:</strong> Pay for accepted utility added to the integrated result, not time, tokens, message count, or self-reported effort. Redundant artifacts earn little or nothing.</p>
+    <p class="small"><strong>Gate:</strong> settlement shares reconcile exactly to escrow and include an auditable rationale.</p>
+  </div>
+  <div class="card" style="margin-top:4mm">
+    <div class="kicker">Rule 8</div>
+    <h3>Separate A2A, MCP, and trust policy</h3>
+    <p><strong>Behavior:</strong> A2A describes and exchanges agent tasks; MCP remains the agent-to-tool boundary. Playgrounds adds identity, authorization, tenant isolation, audit, and policy.</p>
+    <p class="small"><strong>Gate:</strong> no Internet exposure until every public-launch control on page 13 passes.</p>
+  </div>
+  <div class="callout danger"><strong>Core principle:</strong> an Agent Card is a claim. Only observed, verified outcomes may become reputation or routing evidence.</div>
+  <div class="page-no">5</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Target architecture</b><span>One control plane · three protocol edges</span></div>
+  <h2>The orchestrator owns state; adapters only translate</h2>
+  <div class="arch">
+    <div class="col">
+      <div class="box"><b>Agent clients</b>Muse · OpenClaw · Hermes · Claude · ChatGPT</div>
+      <div class="box"><b>A2A edge</b>Discovery, task exchange, streaming, artifacts</div>
+      <div class="box"><b>MCP edge</b>Existing tools for local clients and agent hosts</div>
+      <div class="box"><b>REST + SSE</b>Dashboard, operator actions, event stream</div>
+    </div>
+    <div class="col">
+      <div class="box core"><strong>Orchestrator service</strong><br>Plan · classify · route · assign · stop · replan · integrate</div>
+      <div class="box"><b>Task ledger</b>Goal, plan, dependencies, contracts, budgets</div>
+      <div class="box"><b>Progress ledger</b>Append-only events, checkpoints, stalls, decisions</div>
+      <div class="box"><b>Decision services</b>Topology selector · router · verifier · reputation · credits</div>
+    </div>
+    <div class="col">
+      <div class="box"><b>Artifact store</b>Immutable bytes + digest + provenance</div>
+      <div class="box"><b>Execution boundary</b>Per-task sandbox, scoped tools, egress policy</div>
+      <div class="box"><b>Identity & policy</b>Tenant, user, agent, scopes, limits</div>
+      <div class="box"><b>Event store</b>Replay, metrics, audit receipts</div>
+    </div>
+  </div>
+  <h3>Service boundaries</h3>
+  <table>
+    <thead><tr><th>Module</th><th>Owns</th><th>Must not own</th></tr></thead>
+    <tbody>
+      <tr><td><code>core/orchestrator.py</code></td><td>Plan and state machine</td><td>Transport parsing</td></tr>
+      <tr><td><code>core/ledger.py</code></td><td>Event append, replay, versions</td><td>Business scoring</td></tr>
+      <tr><td><code>decision/router.py</code></td><td>Predictions and utility</td><td>Direct assignment mutation</td></tr>
+      <tr><td><code>decision/verifier.py</code></td><td>Checks and receipts</td><td>Credit transfer</td></tr>
+      <tr><td><code>adapters/a2a.py</code></td><td>A2A mapping</td><td>Policy exceptions</td></tr>
+      <tr><td><code>adapters/mcp.py</code></td><td>Backward compatibility</td><td>Second source of truth</td></tr>
+      <tr><td><code>policy/authz.py</code></td><td>Scopes and tenant checks</td><td>LLM decisions</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><strong>Architecture invariant:</strong> commands are validated once, state changes are appended once, and every adapter receives the same result envelope.</div>
+  <div class="page-no">6</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Ledgers</b><span>Plan outside the prompt</span></div>
+  <h2>Two ledgers make progress inspectable and recoverable</h2>
+  <p class="lede">Magentic-One separates a task ledger from a progress ledger and replans when work stalls. Playgrounds should adopt the pattern as durable state, not model-only scratch text. [4]</p>
+  <div class="grid2">
+    <div class="card tint">
+      <h3>Task ledger: what must become true</h3>
+      <ul class="tight">
+        <li><strong>Goal contract:</strong> objective, owner, success criteria, constraints.</li>
+        <li><strong>Task graph:</strong> dependencies, milestones, risk, topology policy.</li>
+        <li><strong>Input contract:</strong> typed parts, provenance, sensitivity.</li>
+        <li><strong>Output contract:</strong> schema, media types, evidence minimums.</li>
+        <li><strong>Economics:</strong> budget, bounty, escrow, maximum cost.</li>
+        <li><strong>Authority:</strong> assignee, verifier, required approvals.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Progress ledger: what happened</h3>
+      <ul class="tight">
+        <li><strong>Event:</strong> actor, timestamp, idempotency key, prior version.</li>
+        <li><strong>Status:</strong> submitted, working, blocked, input required, terminal.</li>
+        <li><strong>Evidence:</strong> artifact IDs, check results, provenance links.</li>
+        <li><strong>Decision:</strong> route score, selected topology, overrides.</li>
+        <li><strong>Recovery:</strong> retries, stall reason, cancellation, replan.</li>
+        <li><strong>Accounting:</strong> reservation, settlement, reversal receipts.</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Canonical state machine</h3>
+  <div class="flow">
+    <div class="node"><b>Submitted</b><br><span class="small">contract valid</span></div><div class="arrow">→</div>
+    <div class="node"><b>Working</b><br><span class="small">lease + progress</span></div><div class="arrow">→</div>
+    <div class="node"><b>Verification</b><br><span class="small">artifacts frozen</span></div>
+  </div>
+  <div class="flow">
+    <div class="node"><b>Input required</b><br><span class="small">pause, preserve lease</span></div><div class="arrow">↔</div>
+    <div class="node"><b>Replan</b><br><span class="small">new task-ledger version</span></div><div class="arrow">→</div>
+    <div class="node"><b>Terminal</b><br><span class="small">completed · failed · canceled · rejected</span></div>
+  </div>
+  <div class="callout warn"><strong>Replan trigger:</strong> no decision-changing progress across two checkpoints, a dependency changes, the selected agent breaches its lease, or verification fails with a recoverable reason. The orchestrator records the reason before creating replacement work.</div>
+  <div class="page-no">7</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Interoperability</b><span>A2A for peers · MCP for tools</span></div>
+  <h2>Agent Cards turn capabilities into versioned contracts</h2>
+  <p class="lede">A2A provides discovery, task, message, part, artifact, and streaming semantics for opaque agents. MCP remains a host-controlled tool interface with one client per server. The two protocols solve different edges. [7][9]</p>
+  <div class="grid2">
+    <div>
+      <h3>Minimal public Agent Card</h3>
+      <pre>{
+  "name": "Forge",
+  "description": "Backend coding agent",
+  "version": "0.2.0",
+  "supportedInterfaces": [{
+    "url": "https://…/a2a",
+    "protocolBinding": "JSONRPC",
+    "protocolVersion": "1.0"
+  }],
+  "capabilities": {"streaming": true},
+  "defaultInputModes": ["text", "data"],
+  "defaultOutputModes": ["text", "file", "data"],
+  "skills": [{
+    "id": "dotnet.backend",
+    "name": ".NET backend",
+    "tags": ["csharp", "api", "tests"]
+  }]
+}</pre>
+    </div>
+    <div>
+      <h3>Playgrounds keeps claims separate</h3>
+      <ul>
+        <li><strong>Declared profile:</strong> card version, skills, endpoints, modes, limits, security schemes.</li>
+        <li><strong>Observed profile:</strong> acceptance posterior, verified quality, latency, spend, timeout rate, evidence quality.</li>
+        <li><strong>Policy overlay:</strong> tenant allowlist, allowed task classes, tool scopes, maximum bounty, trust zone.</li>
+      </ul>
+      <div class="callout"><strong>Never overwrite one with another.</strong> A provider may update a card; observed performance remains Playgrounds-owned history tied to agent identity and skill version.</div>
+    </div>
+  </div>
+  <h3>v0.2 protocol slice</h3>
+  <table>
+    <thead><tr><th>Surface</th><th>Implement now</th><th>Defer</th></tr></thead>
+    <tbody>
+      <tr><td>A2A discovery</td><td>Well-known Agent Card; registry import</td><td>Open public registry</td></tr>
+      <tr><td>A2A tasking</td><td>Send, stream, get, cancel; artifact updates</td><td>gRPC binding</td></tr>
+      <tr><td>MCP</td><td>Keep 16 tools; add typed contracts</td><td>Remote MCP marketplace</td></tr>
+      <tr><td>REST/SSE</td><td>Operator UI and ledger feed</td><td>Anonymous access</td></tr>
+    </tbody>
+  </table>
+  <div class="page-no">8</div>
+</section>
+
+<section class="page route-page">
+  <div class="header"><b>Learned routing</b><span>Replace model-name tiers</span></div>
+  <h2>Predict verified utility, then expose the reason</h2>
+  <p class="lede">RouteLLM shows that preference-trained routing can lower cost while preserving quality; Playgrounds should apply the same principle to agent selection using its own verified task outcomes. [6]</p>
+  <h3>Feature contract</h3>
+  <div class="grid3">
+    <div class="card"><strong>Task</strong><br><span class="small">type · required skills · difficulty · decomposability · coupling · tool intensity · risk · deadline · budget</span></div>
+    <div class="card"><strong>Agent</strong><br><span class="small">card skills · skill version · availability · observed quality · latency · timeout · cost · trust zone</span></div>
+    <div class="card"><strong>Interaction</strong><br><span class="small">skill overlap · prior task similarity · owner preference · tool compatibility · context fit</span></div>
+  </div>
+  <h3>Decision function</h3>
+  <pre>expected_utility(agent, task) =
+    p(accepted) × expected_quality × task_value
+  − expected_credits
+  − latency_weight × expected_latency
+  − risk_weight × failure_cost
+  − coordination_cost(topology)</pre>
+  <h3>Learning path</h3>
+  <div class="phase"><div class="num">1</div><div><strong>Log the v0.1 baseline.</strong><br><span class="small">Store every heuristic suggestion, selected agent, override, outcome, cost, latency, and verifier confidence.</span></div><div class="gate">NO CONTROL</div></div>
+  <div class="phase"><div class="num">2</div><div><strong>Train an interpretable pairwise model.</strong><br><span class="small">Start with regularized logistic acceptance + separate latency/cost estimators. Use time-split validation to prevent leakage.</span></div><div class="gate">OFFLINE</div></div>
+  <div class="phase"><div class="num">3</div><div><strong>Run in shadow mode.</strong><br><span class="small">Return learned rankings beside heuristic rankings, but do not assign. Measure regret and calibration.</span></div><div class="gate">OBSERVE</div></div>
+  <div class="phase"><div class="num">4</div><div><strong>Allow opt-in assisted routing.</strong><br><span class="small">Human confirms the top choice; overrides become preference labels, not automatic failures.</span></div><div class="gate">APPROVE</div></div>
+  <div class="phase"><div class="num">5</div><div><strong>Autopilot low-risk tasks only.</strong><br><span class="small">Require a passed held-out gate and retain rollback to heuristic or manual assignment.</span></div><div class="gate">LIMITED</div></div>
+  <div class="callout warn"><strong>Cold start:</strong> use v0.1 heuristics as priors, with explicit uncertainty. Do not pretend a model family is a stable capability ranking. Route exploration deliberately, cap its budget, and never explore on high-risk tasks.</div>
+  <div class="page-no">9</div>
+</section>
+
+<section class="page topology-page">
+  <div class="header"><b>Topology selection</b><span>Scale only when structure allows it</span></div>
+  <h2>One classifier chooses solo, scout-team, or specialist DAG</h2>
+  <div class="callout"><strong>Standing capacity invariant:</strong> a playground may contain no more than four registered agents. The MVP already enforces this with <code>MAX_AGENTS=4</code>, returns HTTP 409 on a fifth registration, and shows occupied slots on the dashboard. Every new adapter and migration must preserve the same atomic check.</div>
+  <table>
+    <thead><tr><th>Signal</th><th>Solo favored</th><th>Small team favored</th></tr></thead>
+    <tbody>
+      <tr><td>Decomposability</td><td>One coherent thread</td><td>Independent evidence lanes</td></tr>
+      <tr><td>Dependency coupling</td><td>Frequent shared-state edits</td><td>Clean subtask boundaries</td></tr>
+      <tr><td>Single-agent baseline</td><td>Already reliable</td><td>Known capability gap</td></tr>
+      <tr><td>Context</td><td>Fits one context window</td><td>Source breadth exceeds one window</td></tr>
+      <tr><td>Verification</td><td>Subjective or weak</td><td>Objective checks available</td></tr>
+      <tr><td>Economics</td><td>Low task value</td><td>Expected uplift covers overhead</td></tr>
+    </tbody>
+  </table>
+  <h3>Three supported topologies</h3>
+  <div class="grid3">
+    <div class="card tint"><div class="kicker">Default</div><h3>Solo</h3><p>One agent owns the task end to end. The orchestrator observes, checkpoints, and verifies.</p><span class="badge">lowest overhead</span></div>
+    <div class="card"><div class="kicker">Evidence breadth</div><h3>Sealed scouts</h3><p>Two to four agents explore independent lanes. They cannot see each other’s drafts; the orchestrator integrates evidence.</p><span class="badge blue">diversity</span></div>
+    <div class="card"><div class="kicker">True decomposition</div><h3>Specialist DAG</h3><p>Two to four workers receive dependency-scoped tasks and isolated workspaces; integration follows topological order.</p><span class="badge amber">higher cost</span></div>
+  </div>
+  <h3>Decision pseudocode</h3>
+  <pre>candidate = SOLO
+if task.decomposability >= 0.70
+   and task.coupling <= 0.30
+   and objective_verifier_available
+   and expected_team_utility >= expected_solo_utility × 1.10:
+       candidate = SEALED_SCOUTS or SPECIALIST_DAG
+candidate.team_size = min(predicted_optimal_size, playground.open_slots, 4)
+assert playground.registered_agent_count <= 4
+require human approval when risk >= HIGH or uncertainty >= 0.25</pre>
+  <div class="callout"><strong>Communication policy:</strong> workers send structured evidence deltas to the orchestrator. Peer-to-peer chat is disabled by default. AgentPrune found large token reductions from removing redundant communication edges, supporting sparse rather than social coordination. [3]</div>
+  <div class="page-no">10</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Verification</b><span>Evidence before judgment</span></div>
+  <h2>Every outcome ends in a signed verification receipt</h2>
+  <div class="flow">
+    <div class="node"><b>Freeze</b><br><span class="small">artifact digests + contract</span></div><div class="arrow">→</div>
+    <div class="node"><b>Check</b><br><span class="small">schema · tests · policy</span></div><div class="arrow">→</div>
+    <div class="node"><b>Judge</b><br><span class="small">rubric + confidence</span></div>
+  </div>
+  <div class="flow">
+    <div class="node"><b>Challenge</b><br><span class="small">independent review if needed</span></div><div class="arrow">→</div>
+    <div class="node"><b>Decide</b><br><span class="small">accept · partial · reject · unverifiable</span></div><div class="arrow">→</div>
+    <div class="node"><b>Settle</b><br><span class="small">credits + reputation + label</span></div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Deterministic checks first</h3>
+      <ul class="tight">
+        <li>Output schema and required fields</li>
+        <li>File integrity, digest, media type, size</li>
+        <li>Executable tests or exact-match validators</li>
+        <li>Policy, permission, provenance, and budget checks</li>
+        <li>Duplicate or near-duplicate artifact detection</li>
+      </ul>
+    </div>
+    <div class="card tint">
+      <h3>Human or model review second</h3>
+      <ul class="tight">
+        <li>Rubric-scored correctness and usefulness</li>
+        <li>Evidence coverage and unresolved uncertainty</li>
+        <li>Attribution by artifact and contributor</li>
+        <li>Confidence score and reason codes</li>
+        <li>Escalation path for disagreement</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Receipt schema</h3>
+  <pre>{
+  "verification_id": "ver_…", "task_id": "task_…",
+  "task_version": 4, "artifact_digests": ["sha256:…"],
+  "deterministic_checks": [{"id":"tests", "result":"pass"}],
+  "rubric": {"correctness":0.9, "completeness":0.8, "evidence":1.0},
+  "decision": "accepted", "confidence": 0.92,
+  "verifier": {"type":"human", "id":"user_…"},
+  "contribution_scores": [{"agent_id":"agent_…", "marginal":0.74}],
+  "issued_at": "…", "signature": "…"
+}</pre>
+  <p class="small">Reviewer comments are evidence to investigate, not proof by themselves. c-CRAB found current review agents collectively solved only around 40% of its held-out-test tasks, so executable checks stay authoritative wherever available. [11]</p>
+  <div class="page-no">11</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Reputation & credits</b><span>Reward signal, absorb noise</span></div>
+  <h2>One receipt drives two distinct ledgers</h2>
+  <div class="grid2">
+    <div class="card tint">
+      <div class="kicker">Trust signal</div>
+      <h3>Capability-specific reputation</h3>
+      <p>For each <code>agent × skill × task_type</code>, maintain a Beta posterior with neutral prior <code>Beta(2,2)</code>. Weight updates by verifier confidence and recency; show the interval and effective sample size, not only a point score.</p>
+      <p><strong>Provisional deadband:</strong></p>
+      <ul class="tight">
+        <li>Quality ≥ 0.75 and confidence ≥ 0.75: positive update.</li>
+        <li>Quality ≤ 0.35 and confidence ≥ 0.75: negative update.</li>
+        <li>Between thresholds, unverifiable, or low confidence: record only; no directional update.</li>
+      </ul>
+      <p class="small">These thresholds are initial policy, to be calibrated from pilot disagreement data.</p>
+    </div>
+    <div class="card">
+      <div class="kicker">Economic signal</div>
+      <h3>Marginal-contribution settlement</h3>
+      <p>Reserve the bounty in escrow. After acceptance, split it into:</p>
+      <ul class="tight">
+        <li><strong>90% work pool</strong> allocated by verified marginal contribution.</li>
+        <li><strong>10% review/integration pool</strong> paid only to eligible independent reviewers or integrators.</li>
+      </ul>
+      <p>For teams of four or fewer, estimate each contribution by leave-one-out evaluation:</p>
+      <pre style="margin-bottom:2mm">delta_i = max(0, V(all) − V(without_i))
+share_i = delta_i / sum(delta)</pre>
+      <p class="small">If evidence cannot isolate a contribution, send the task to human settlement and do not auto-learn from the split.</p>
+    </div>
+  </div>
+  <h3>Anti-gaming invariants</h3>
+  <table>
+    <thead><tr><th>Attack</th><th>Control</th><th>Ledger effect</th></tr></thead>
+    <tbody>
+      <tr><td>Duplicate work</td><td>Similarity + provenance check</td><td>Near-zero marginal credit</td></tr>
+      <tr><td>Self-review</td><td>Identity-aware separation</td><td>Settlement rejected</td></tr>
+      <tr><td>Message spam</td><td>No pay for messages/tokens</td><td>Rate-limit event only</td></tr>
+      <tr><td>Easy-task farming</td><td>Task value + difficulty strata</td><td>Reputation remains per capability</td></tr>
+      <tr><td>Reviewer collusion</td><td>Conflict rules + audit sampling</td><td>Held settlement; trust review</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><strong>Do not convert credits to money in v0.2.</strong> First establish abuse rates, dispute handling, accounting semantics, and legal/tax implications.</div>
+  <div class="page-no">12</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Trust boundary</b><span>Private pilot before public surface</span></div>
+  <h2>Public exposure is a release gate, not a deployment step</h2>
+  <p class="lede">A2A enables interoperability without sharing internal memory or tools, but it does not supply Playgrounds’ cross-owner authorization, tenancy, credit policy, or audit model. Those are the product’s trust layer. [7][8]</p>
+  <div class="grid2">
+    <div>
+      <h3>Identity and authorization</h3>
+      <div class="checklist">
+        <div class="check"></div><div>User authentication and verified ownership of each agent.</div>
+        <div class="check"></div><div>Per-agent asymmetric key; short-lived tokens bound to tenant, audience, and scopes.</div>
+        <div class="check"></div><div>Scopes for goal read/write, task claim, artifact publish, verify, and settle.</div>
+        <div class="check"></div><div>Minimal public card; authenticated extended card for sensitive skills and endpoints.</div>
+        <div class="check"></div><div>Revocation, rotation, device/session inventory, and emergency kill switch.</div>
+      </div>
+      <h3>Execution and data</h3>
+      <div class="checklist">
+        <div class="check"></div><div>Per-task sandbox with isolated filesystem and bounded CPU, memory, wall time, and output size.</div>
+        <div class="check"></div><div>Default-deny network egress; explicit destination/tool allowlists.</div>
+        <div class="check"></div><div>Tenant-scoped storage and encryption; no cross-tenant object references.</div>
+        <div class="check"></div><div>Artifact malware/content scanning before another agent can consume it.</div>
+      </div>
+    </div>
+    <div>
+      <h3>Prompt-injection containment</h3>
+      <div class="checklist">
+        <div class="check"></div><div>Treat every remote message, card, tool result, and artifact as untrusted data.</div>
+        <div class="check"></div><div>Never let remote text rewrite system policy, scopes, routing rules, or approval requirements.</div>
+        <div class="check"></div><div>Pass only task-minimum context; redact unrelated user memory and credentials.</div>
+        <div class="check"></div><div>Validate structured fields independently of natural-language content.</div>
+      </div>
+      <h3>Operations and abuse</h3>
+      <div class="checklist">
+        <div class="check"></div><div>Per-tenant and per-agent rate, concurrency, spend, and artifact quotas.</div>
+        <div class="check"></div><div>Immutable audit receipts with actor, scope, decision, and content digest.</div>
+        <div class="check"></div><div>Replay-safe idempotency keys and signed webhook/push events.</div>
+        <div class="check"></div><div>Threat model, abuse tests, incident runbook, backup restore, and dependency inventory.</div>
+      </div>
+    </div>
+  </div>
+  <div class="callout danger"><strong>Public-launch gate:</strong> every checkbox above passes automated or documented review; cross-tenant negative tests show no data access; all mutating routes enforce scopes; a third-party security review has no unresolved critical/high findings.</div>
+  <div class="page-no">13</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Implementation plan</b><span>Seven platform increments · no big-bang rewrite</span></div>
+  <h2>Ship the evidence spine before the intelligence layer</h2>
+  <div class="phase"><div class="num">0</div><div><strong>Baseline and freeze.</strong><br><span class="small">Tag v0.1; export state; add schema version; capture current routing suggestions, assignments, outcomes, latency, credits, and manual overrides.</span></div><div class="gate">Exit: replayable baseline</div></div>
+  <div class="phase"><div class="num">1</div><div><strong>Ledgers and typed artifacts.</strong><br><span class="small">Introduce command model, event store, task DAG, leases, progress checkpoints, input/output contracts, immutable artifact metadata, and migration script.</span></div><div class="gate">Exit: deterministic replay</div></div>
+  <div class="phase"><div class="num">2</div><div><strong>Central orchestrator.</strong><br><span class="small">Add plan, topology classification, assignment, stall detection, cancel/replan, integration, and human approval gates. Preserve the four-slot playground invariant across every assignment path.</span></div><div class="gate">Exit: 3 scripted scenarios</div></div>
+  <div class="phase"><div class="num">3</div><div><strong>A2A adapter and Agent Cards.</strong><br><span class="small">Implement well-known card, registry import, JSON-RPC task send/get/cancel, SSE status/artifact updates, and one real second-client interoperability test.</span></div><div class="gate">Exit: round trip passes</div></div>
+  <div class="phase"><div class="num">4</div><div><strong>Verification, reputation, and settlement.</strong><br><span class="small">Add check runners, receipts, deadbanded capability posteriors, contribution graph, leave-one-out allocation, disputes, and exact escrow reconciliation.</span></div><div class="gate">Exit: abuse suite passes</div></div>
+  <div class="phase"><div class="num">5</div><div><strong>Learned router in shadow mode.</strong><br><span class="small">Train interpretable estimators, produce reasons and uncertainty, compare against v0.1 and manual choices, then enable assisted routing for low-risk tasks.</span></div><div class="gate">Exit: held-out win</div></div>
+  <div class="phase"><div class="num">6</div><div><strong>Private cross-owner pilot.</strong><br><span class="small">Add identities, scopes, tenant isolation, sandboxing, quotas, signed receipts, and operator tooling. Run only with invited agents and non-cash credits.</span></div><div class="gate">Exit: security gate</div></div>
+  <div class="callout"><strong>Parallel platform work:</strong> the dashboard can evolve alongside every increment by reading the same ledger events: topology decision, task graph, live checkpoints, verification status, uncertainty, credit settlement, and the four-slot capacity state. Avatar production remains queued until these platform increments are refined.</div>
+  <div class="page-no">14</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Code plan</b><span>Files, APIs, and schemas</span></div>
+  <h2>The smallest credible v0.2 codebase</h2>
+  <div class="grid2">
+    <div>
+      <h3>New source layout</h3>
+      <pre>mvp/
+  core/
+    commands.py
+    models.py
+    orchestrator.py
+    ledger.py
+    artifacts.py
+  decision/
+    topology.py
+    router.py
+    verifier.py
+    reputation.py
+    credits.py
+  adapters/
+    rest.py
+    mcp.py
+    a2a.py
+  policy/
+    authn.py
+    authz.py
+    sandbox.py
+  migrations/
+    v01_to_v02.py
+  evals/
+    fixtures/  run_eval.py
+  tests/
+    unit/ integration/ abuse/ interop/</pre>
+    </div>
+    <div>
+      <h3>Core records to add</h3>
+      <p><span class="badge">schema_version</span><span class="badge">tenant_id</span><span class="badge">task_version</span><span class="badge">idempotency_key</span></p>
+      <p><span class="badge blue">task_type</span><span class="badge blue">dependencies</span><span class="badge blue">success_criteria</span><span class="badge blue">risk</span></p>
+      <p><span class="badge amber">input_contract</span><span class="badge amber">output_contract</span><span class="badge amber">artifact_ids</span></p>
+      <p><span class="badge red">verification_receipt</span><span class="badge red">settlement_receipt</span></p>
+      <h3>Keep existing APIs stable</h3>
+      <p>Preserve current endpoints and MCP tool names through adapter translation. Return deprecation metadata only when a v0.1 field cannot express the v0.2 result.</p>
+      <h3>Add APIs</h3>
+      <ul class="tight">
+        <li><code>POST /api/plans</code> and <code>/replan</code></li>
+        <li><code>POST /api/tasks/{id}/progress</code></li>
+        <li><code>POST /api/tasks/{id}/artifacts</code></li>
+        <li><code>POST /api/tasks/{id}/cancel</code></li>
+        <li><code>GET /api/decisions/{id}</code></li>
+        <li><code>GET /api/ledger?goal_id=…</code></li>
+        <li><code>GET /.well-known/agent-card.json</code></li>
+        <li><code>POST /a2a</code> plus SSE stream</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Minimum event vocabulary</h3>
+  <table>
+    <thead><tr><th>Plan</th><th>Execution</th><th>Trust & money</th></tr></thead>
+    <tbody>
+      <tr><td>plan_created</td><td>task_leased</td><td>artifact_published</td></tr>
+      <tr><td>topology_selected</td><td>progress_recorded</td><td>verification_issued</td></tr>
+      <tr><td>route_proposed</td><td>stall_detected</td><td>reputation_updated</td></tr>
+      <tr><td>route_overridden</td><td>task_replanned</td><td>credits_settled</td></tr>
+    </tbody>
+  </table>
+  <div class="page-no">15</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>Evaluation</b><span>Decide with matched budgets</span></div>
+  <h2>v0.2 ships only if it beats the simple baseline</h2>
+  <p class="lede">Compare topologies on the same task fixtures, tool access, model pool, time ceiling, and credit budget. Report mean and tail behavior; do not cherry-pick best runs.</p>
+  <table>
+    <thead><tr><th>Metric</th><th>Launch target</th><th>Failure action</th></tr></thead>
+    <tbody>
+      <tr><td>Verified utility / credit</td><td>≥10% over v0.1 baseline</td><td>Keep v0.1 routing</td></tr>
+      <tr><td>Accepted task rate</td><td>No regression at equal budget</td><td>Disable learned control</td></tr>
+      <tr><td>Router calibration</td><td>Within 0.10 Brier score</td><td>Shadow mode only</td></tr>
+      <tr><td>Coordination overhead</td><td>≤20% of run tokens/events</td><td>Prune messages or shrink team</td></tr>
+      <tr><td>Artifact contract compliance</td><td>100% terminal tasks</td><td>Block settlement</td></tr>
+      <tr><td>Ledger replay</td><td>Same state digest, 100%</td><td>Block release</td></tr>
+      <tr><td>Credit reconciliation</td><td>Exact; no negative balances</td><td>Block release</td></tr>
+      <tr><td>Tenant isolation</td><td>Zero cross-tenant access</td><td>Block pilot/public access</td></tr>
+    </tbody>
+  </table>
+  <h3>Evaluation matrix</h3>
+  <div class="grid3">
+    <div class="card"><strong>Sequential tasks</strong><br><span class="small">Expect solo to win. Tests prevent fan-out enthusiasm from becoming policy.</span></div>
+    <div class="card"><strong>Decomposable research</strong><br><span class="small">Compare solo with two and four sealed scouts; measure unique evidence and cost.</span></div>
+    <div class="card"><strong>Dependency-heavy builds</strong><br><span class="small">Compare solo with isolated specialist DAG; measure conflicts, rework, and test pass rate.</span></div>
+  </div>
+  <h3>Minimum pilot sample</h3>
+  <p>Do not promote the learned router until at least <strong>100 verified tasks</strong> span three task types and at least three agents, with a time-ordered holdout. If the sample is smaller, v0.2 still ships with ledgers, A2A, verification, and shadow recommendations; routing remains manual or heuristic.</p>
+  <div class="callout warn"><strong>Targets are hypotheses, not results.</strong> The first pilot exists to calibrate thresholds for topology, deadband, router uncertainty, and contribution scoring. Preserve raw receipts so every threshold can be recomputed.</div>
+  <div class="page-no">16</div>
+</section>
+
+<section class="page done-page">
+  <div class="header"><b>Definition of done</b><span>Owner-ready checklist</span></div>
+  <h2>The v0.2 handoff is executable without hidden decisions</h2>
+  <div class="grid2">
+    <div>
+      <h3>Product behavior</h3>
+      <div class="checklist">
+        <div class="check"></div><div>New goal creates a versioned plan and success criteria.</div>
+        <div class="check"></div><div>Every task has typed input, output, evidence, risk, and dependency fields.</div>
+        <div class="check"></div><div>Topology selector records solo/team decision and counterfactual.</div>
+        <div class="check"></div><div>A fifth registration returns HTTP 409 across every registration adapter; the dashboard agrees with server capacity.</div>
+        <div class="check"></div><div>Orchestrator detects a stall and can cancel or replan.</div>
+        <div class="check"></div><div>Agent Card discovery and one real A2A task round-trip pass.</div>
+        <div class="check"></div><div>Existing MCP test remains green through the adapter.</div>
+        <div class="check"></div><div>Dashboard renders live plan, progress, verification, and settlement events.</div>
+      </div>
+      <h3>Evidence and economics</h3>
+      <div class="checklist">
+        <div class="check"></div><div>Artifact digests and provenance survive replay.</div>
+        <div class="check"></div><div>Verifier receipt gates reputation, labels, and payout.</div>
+        <div class="check"></div><div>Deadband leaves ambiguous outcomes neutral.</div>
+        <div class="check"></div><div>Contribution shares reconcile to escrow exactly.</div>
+      </div>
+    </div>
+    <div>
+      <h3>Operational safety</h3>
+      <div class="checklist">
+        <div class="check"></div><div>All mutating commands are idempotent and authorized.</div>
+        <div class="check"></div><div>Tenant isolation and object-level authorization tests pass.</div>
+        <div class="check"></div><div>Rate, spend, concurrency, and artifact limits are enforced.</div>
+        <div class="check"></div><div>Untrusted agent content cannot alter policy or tool scopes.</div>
+        <div class="check"></div><div>Backup restore and event replay reproduce the same state.</div>
+      </div>
+      <h3>Decision at the end</h3>
+      <div class="card tint">
+        <p><strong>Promote:</strong> if verified utility per credit improves and all trust gates pass.</p>
+        <p><strong>Hold:</strong> if quality improves but the cost or security envelope does not.</p>
+        <p><strong>Roll back:</strong> if learned routing or multi-agent execution fails to beat the solo/v0.1 baseline under matched budgets.</p>
+      </div>
+    </div>
+  </div>
+  <div class="callout"><strong>Recommended first build:</strong> Increment 0 + Increment 1 together. The ledger and artifact contract create the training data, auditability, and migration safety needed by every later feature.</div>
+  <h3>Assumptions made for this plan</h3>
+  <p class="small">The v0.2 pilot remains private and invitation-only; credits remain non-cash; the core stays Python-based; each playground has a standing ceiling of four registered agents; JSON-RPC + SSE is the first A2A binding; the existing dashboard remains the operator surface; avatar implementation begins only after the platform refinements; and thresholds are provisional until pilot data calibrates them.</p>
+  <div class="page-no">17</div>
+</section>
+
+<section class="page avatar-page">
+  <div class="header"><b>Avatar and animation workstream</b><span>Phase after platform refinement</span></div>
+  <h2>Give each agent a soft body and a clear operational state</h2>
+  <p class="lede">The visual direction fuses the polished, responsive feel of the Muse assistant avatar with an original stuffed-animal/chibi character system. This is a design target, not an asset copy: Playgrounds should borrow the sense of presence and motion quality while keeping its own silhouettes, materials, expressions, and identity.</p>
+  <div class="grid2">
+    <div class="card tint">
+      <div class="kicker">Character language</div>
+      <h3>Soft, collectible, unmistakably readable</h3>
+      <ul class="tight">
+        <li>Oversized head, compact body, rounded paws, and a strong silhouette at dashboard scale.</li>
+        <li>Plush or felt material cues, subtle seams, restrained highlights, and one capability-linked accent.</li>
+        <li>Face stays minimal: eyes, brows, and mouth carry state without becoming noisy.</li>
+        <li>Every agent remains identifiable in grayscale and at a small tile size.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="kicker">Motion language</div>
+      <h3>Ambient life, elastic response, calm restraint</h3>
+      <ul class="tight">
+        <li><strong>Idle:</strong> slow breathing, tiny weight shift, occasional blink.</li>
+        <li><strong>Thinking:</strong> focused gaze, gentle hover or bob, contained pulse.</li>
+        <li><strong>Working:</strong> purposeful loop tied to progress, never random busyness.</li>
+        <li><strong>Blocked:</strong> softened posture and a clear pause signal, not distress theater.</li>
+        <li><strong>Done:</strong> brief squash-and-stretch acknowledgement, then return to idle.</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Build sequence after platform refinements</h3>
+  <div class="phase"><div class="num">A</div><div><strong>Reference and originality study.</strong><br><span class="small">Extract motion qualities and interaction principles from the Muse feel; document what Playgrounds will make distinct. Reuse no proprietary avatar assets.</span></div><div class="gate">Exit: art brief</div></div>
+  <div class="phase"><div class="num">B</div><div><strong>One canonical mascot.</strong><br><span class="small">Create front, side, expression, material, and scale sheets for one stuffed-animal/chibi agent.</span></div><div class="gate">Exit: model sheet</div></div>
+  <div class="phase"><div class="num">C</div><div><strong>State animation prototype.</strong><br><span class="small">Prototype idle, thinking, working, blocked, handoff, and done at actual dashboard dimensions, with reduced-motion fallbacks.</span></div><div class="gate">Exit: motion test</div></div>
+  <div class="phase"><div class="num">D</div><div><strong>Systemize and integrate.</strong><br><span class="small">Define rig slots, color and accessory tokens, animation events, performance budgets, and the mapping from ledger state to motion.</span></div><div class="gate">Exit: one live agent</div></div>
+  <div class="callout warn"><strong>Sequencing gate:</strong> do not implement avatars yet. Begin production only after the platform refinements expose stable agent identity, lifecycle states, progress events, and the four-slot layout. The first animation milestone is one character in the existing dashboard, not a full 3D world.</div>
+  <div class="page-no">18</div>
+</section>
+
+<section class="page">
+  <div class="header"><b>References</b><span>Primary research and standards</span></div>
+  <h2>Evidence used for the build decisions</h2>
+  <div class="source"><b>[1]</b> Kim et al. <em>Capable language models can outgrow the benefits of collaboration.</em> Nature Machine Intelligence, 2026. <a href="https://www.nature.com/articles/s42256-026-01268-y">https://www.nature.com/articles/s42256-026-01268-y</a></div>
+  <div class="source"><b>[2]</b> Cemri et al. <em>Why Do Multi-Agent LLM Systems Fail?</em> MAST taxonomy, 2025. <a href="https://arxiv.org/abs/2503.13657">https://arxiv.org/abs/2503.13657</a></div>
+  <div class="source"><b>[3]</b> Zhang et al. <em>Cut the Crap: An Economical Communication Pipeline for LLM-based Multi-Agent Systems.</em> AgentPrune, 2024. <a href="https://arxiv.org/abs/2410.02506">https://arxiv.org/abs/2410.02506</a></div>
+  <div class="source"><b>[4]</b> Fourney et al. <em>Magentic-One: A Generalist Multi-Agent System for Solving Complex Tasks.</em> 2024. <a href="https://arxiv.org/html/2411.04468v1">https://arxiv.org/html/2411.04468v1</a></div>
+  <div class="source"><b>[5]</b> Anthropic. <em>How we built our multi-agent research system.</em> 2025. <a href="https://www.anthropic.com/engineering/multi-agent-research-system">https://www.anthropic.com/engineering/multi-agent-research-system</a></div>
+  <div class="source"><b>[6]</b> Ong et al. <em>RouteLLM: Learning to Route LLMs with Preference Data.</em> ICLR 2025. <a href="https://arxiv.org/html/2406.18665v3/">https://arxiv.org/html/2406.18665v3/</a></div>
+  <div class="source"><b>[7]</b> A2A Project. <em>Agent2Agent Protocol Specification 1.0.</em> <a href="https://a2a-protocol.org/latest/specification/">https://a2a-protocol.org/latest/specification/</a></div>
+  <div class="source"><b>[8]</b> A2A Project. <em>Agent Discovery and Agent Card security guidance.</em> <a href="https://a2a-protocol.org/latest/topics/agent-discovery/">https://a2a-protocol.org/latest/topics/agent-discovery/</a></div>
+  <div class="source"><b>[9]</b> Model Context Protocol. <em>Architecture, 2026-07-28 specification.</em> <a href="https://modelcontextprotocol.io/specification/2026-07-28/architecture">https://modelcontextprotocol.io/specification/2026-07-28/architecture</a></div>
+  <div class="source"><b>[10]</b> Geng &amp; Neubig. <em>Effective Strategies for Asynchronous Software Engineering Agents.</em> CAID, 2026. <a href="https://arxiv.org/abs/2603.21489">https://arxiv.org/abs/2603.21489</a></div>
+  <div class="source"><b>[11]</b> Zhang et al. <em>Code Review Agent Benchmark.</em> c-CRAB, 2026. <a href="https://arxiv.org/abs/2603.23448">https://arxiv.org/abs/2603.23448</a></div>
+  <div class="callout" style="margin-top:7mm"><strong>How to read the evidence:</strong> the reviewed studies cover different tasks, models, and evaluation methods. The plan treats their findings as design priors to test locally, not universal constants. The matched-budget Playgrounds evaluation on page 16 decides what remains.</div>
+  <h3>Internal baseline</h3>
+  <p class="small">The current Playgrounds MVP implementation and design notes establish the v0.1 baseline: Python protocol server, 2D SSE dashboard, 16-tool MCP connector, agent messaging and context, human verification, escrowed non-cash credits, and heuristic capability/model/effort delegation.</p>
+  <div class="page-no">19</div>
+</section>
+
+</body>
+</html>'''
+out.write_text(html, encoding='utf-8')
+print(out)
