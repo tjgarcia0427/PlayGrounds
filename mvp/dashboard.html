@@ -11,8 +11,8 @@
   header { padding:28px 32px 8px; }
   header h1 { margin:0; font-size:32px; }
   header p { color:var(--dim); margin:6px 0 0; font-size:15px; }
-  main { padding:16px 32px 40px; display:grid; gap:20px; max-width:1240px; }
-  section { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+  main { width:100%; grid-template-columns:minmax(0,1fr); padding:16px 32px 40px; display:grid; gap:20px; max-width:1240px; }
+  section { min-width:0; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
   section h2 { margin:0 0 12px; font-size:14px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
   section h2 .sub { font-size:12px; text-transform:none; letter-spacing:0; font-weight:400; margin-left:8px; }
 
@@ -52,7 +52,7 @@
   .col h3 { margin:0 0 8px; font-size:13px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
   .task { background:#1e2140; border:1px solid var(--line); border-radius:10px; padding:8px 10px; margin-bottom:8px; font-size:14px; }
   .task small { color:var(--dim); display:block; margin-top:4px; }
-  .task .row { display:flex; gap:6px; margin-top:8px; }
+  .task .row { flex-wrap:wrap; display:flex; gap:6px; margin-top:8px; }
   .badge { display:inline-block; font-size:11px; padding:1px 8px; border-radius:999px; background:#2a2d4d; color:var(--dim); margin-left:6px; vertical-align:middle; }
   .badge.team { background:#1e3a5f; color:#93c5fd; }
   .badge.needs { background:#7f1d1d; color:#fca5a5; }
@@ -78,7 +78,7 @@
   }
 
   #campus3d { border-radius:24px; overflow:hidden; background:#f4dfd5; width:100%; min-height:360px; }
-  #campus3d canvas { display:block; width:100%; }
+  #campus3d canvas { display:block; max-width:100%; }
   .camera-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0; }
   .camera-controls button, .camera-controls select { border:1px solid #c9bdc9; border-radius:12px; padding:8px 12px; background:#eee3e4; color:#433a52; }
   #renderStatus { font-size:12px; color:var(--dim); }
@@ -98,7 +98,7 @@
   #worldStage[data-focus="classroom"] .world-agent[data-space="playground"] { opacity:.35; }
   #socialFeed { max-height:280px; overflow:auto; } .social-line { padding:8px 0; border-bottom:1px solid var(--line); }
   @media (prefers-reduced-motion:reduce) { .world-agent { transition:none; } }
-  @media (max-width:600px) { .world-agent { width:38px; } .world-agent img { width:32px; height:32px; } .zone-label { font-size:14px; } }
+  @media (max-width:600px) { main { padding:12px; } header { padding:20px 12px 8px; } section { padding:12px; } #board { grid-template-columns:minmax(0,1fr); } .agent { min-width:0; width:100%; } .taskline { overflow-wrap:anywhere; }  .world-agent { width:38px; } .world-agent img { width:32px; height:32px; } .zone-label { font-size:14px; } }
 </style>
 </head>
 <body>

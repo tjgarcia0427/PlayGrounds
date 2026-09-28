@@ -24,19 +24,19 @@ function buildCampus() {
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
   renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=1.25;
+  renderer.toneMappingExposure=1.0;
   renderer.shadowMap.enabled=true;
   renderer.shadowMap.type=THREE.PCFShadowMap;
   renderer.domElement.setAttribute('aria-label','3D toy garden and cutaway Classroom; full agent details are available in the 2D view.');
   renderer.domElement.setAttribute('role','img');
   host.appendChild(renderer.domElement);
-  scene.add(new THREE.HemisphereLight('#fff3e1','#96b7ba',2.6));
-  const sun=new THREE.DirectionalLight('#fff0cf',3.5);
+  scene.add(new THREE.HemisphereLight('#fff3e1','#96b7ba',1.7));
+  const sun=new THREE.DirectionalLight('#fff0cf',2.3);
   sun.position.set(-10,22,14);sun.castShadow=true;
   sun.shadow.mapSize.set(1024,1024);
   Object.assign(sun.shadow.camera,{left:-20,right:20,top:15,bottom:-15,near:1,far:60});
   sun.shadow.normalBias=.06;scene.add(sun);
-  const rim=new THREE.DirectionalLight('#d1d9ff',1.4);rim.position.set(15,10,-12);scene.add(rim);
+  const rim=new THREE.DirectionalLight('#d1d9ff',1.1);rim.position.set(15,10,-12);scene.add(rim);
   const materials=new Map();
   function mat(color) {
     if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.88,metalness:0}));
@@ -82,14 +82,18 @@ function buildCampus() {
   }
   // Carpet islands and tiny study desks.
   box('#c3bfdc',[6.7,.13,-.5],[10.5,.07,8.2]);
+  const stations=[];
   for(let i=0;i<24;i++) {
+    const station=new THREE.Group();scene.add(station);stations.push(station);
     const p=spot('classroom',i);
-    box('#cd9e73',[p.x,.63,p.z-.5],[1.45,.14,.74]);
-    for(const dx of [-.55,.55]) box('#a77e62',[p.x+dx,.31,p.z-.5],[.09,.62,.48]);
-    box('#fff4d9',[p.x-.15,.735,p.z-.5],[.55,.045,.4]);
-    box('#d59096',[p.x+.14,.76,p.z-.5],[.025,.05,.39]);
-    disc('#c5b4cf',[p.x,.3,p.z+.38],[.32,.5,.32]);
+    box('#cd9e73',[p.x,.63,p.z-.5],[1.45,.14,.74],station);
+    for(const dx of [-.55,.55]) box('#a77e62',[p.x+dx,.31,p.z-.5],[.09,.62,.48],station);
+    box('#fff4d9',[p.x-.15,.735,p.z-.5],[.55,.045,.4],station);
+    box('#d59096',[p.x+.14,.76,p.z-.5],[.025,.05,.39],station);
+    disc('#c5b4cf',[p.x,.3,p.z+.38],[.32,.5,.32],station);
   }
+  disc('#cd9b92',[11,.4,4.2],[.5,.65,.5]);
+  for(let i=0;i<5;i++)ball('#88b6a0',[11+Math.sin(i*1.3)*.35,1+i*.15,4.2+Math.cos(i)*.25],[.2,.5,.18]);
   // Bookcase: a little crooked rainbow of books, not photorealistic clutter.
   box('#c69774',[1.1,1.1,-5.2],[1.25,2.2,.65]);
   const books=['#a9c9c3','#e6aca9','#d5c1e7','#e8cf85'];
@@ -174,6 +178,7 @@ function buildCampus() {
       scene.remove(a.root,a.name);a.name.material.map.dispose();a.name.material.dispose();
       a.root.traverse(o=>{if(o.geometry && ![sphere,cube,cylinder].includes(o.geometry))o.geometry.dispose()});actors.delete(id);
     }
+    stations.forEach((station,i)=>{station.visible=i<Math.max(4,counts.classroom)});
     status.textContent=`3D campus · ${shown.length} characters${world.agents.length>RENDER_LIMIT ? ' shown of '+world.agents.length+' (full roster in 2D)' : ''} · decorative idle animation is not agent activity`;
   }
   function resize() {
@@ -224,6 +229,8 @@ function buildCampus() {
       a.feet.forEach((foot,i)=>foot.position.y=.15+motion*(walking?Math.max(0,Math.sin(seconds*12+i*Math.PI))*.15:0));
       a.name.position.set(a.root.position.x,2.1,a.root.position.z);
     }
+    host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
+    host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);
     renderer.render(scene,camera);
   }
   if(globalThis.playgroundsWorldSnapshot)sync(globalThis.playgroundsWorldSnapshot.world);
