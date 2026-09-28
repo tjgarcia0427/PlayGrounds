@@ -314,7 +314,7 @@ class Unit(unittest.TestCase):
 def http(method, path, data=None, port=8479):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}", method=method,
-        data=json.dumps(data or {}).encode(),
+        data=None if method == "GET" else json.dumps(data or {}).encode(),
         headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
