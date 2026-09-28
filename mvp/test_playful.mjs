@@ -24,7 +24,7 @@ for(const kind of ['slide','monkey']) {
    const interrupted=new InteractionDirector(route);interrupted.start(actor,kind);
    for(let i=0;i<1200&&interrupted.active.get(actor.id)?.stage!==phase;i++)interrupted.tick(.05,[actor],true,0,false);
    interrupted.tick(.25,[actor],true,0,false);
-   const stopped=interrupted.cancel(actor.id,true);assert.ok(stopped.escape?.length);assert.ok(route(stopped.exit,spot('classroom',0)));
+   const stopped=interrupted.cancel(actor.id,true);assert.ok(stopped.escape?.length);assert.equal(stopped.exitPose,kind==='slide'?'slide':'hang');assert.ok(route(stopped.exit,spot('classroom',0)));
    assert.equal(interrupted.leases.get(kind),actor.id,'hold reservation during equipment exit');
    assert.equal(interrupted.start({...actor,id:'other'},kind),false);
    interrupted.finishExit(actor.id);assert.ok(interrupted.start({...actor,id:'other'},kind));

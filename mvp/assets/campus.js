@@ -267,8 +267,10 @@ function buildCampus() {
         const interrupted=director.cancel(agent.id,true),from={x:actor.root.position.x,y:actor.root.position.y,z:actor.root.position.z};
         const exit=interrupted?.exit,next=route(exit||from,goal);
         actor.path=next?(exit?[...(interrupted.escape||[from,exit]),...next.slice(1)]:next):null;
+        actor.exitPose=exit?interrupted.exitPose:null;actor.exitDistance=exit?routeLength(interrupted.escape):0;
         if(!next){actor.root.position.set(goal.x,0,goal.z);director.finishExit(agent.id);} // no invented route through a blocked set
-        actor.start=performance.now();actor.duration=actor.path?Math.max(500,routeLength(actor.path)/1.8*1000):1;
+        actor.pathLength=actor.path?routeLength(actor.path):0;
+        actor.start=performance.now();actor.duration=actor.path?Math.max(500,actor.pathLength/1.8*1000):1;
         actor.crossing=actor.space!==agent.presence.space;
       }
       actor.stamp=JSON.stringify(agent.presence);
@@ -353,6 +355,7 @@ function buildCampus() {
         const dx=p.x-a.root.position.x,dz=p.z-a.root.position.z;
         if(Math.hypot(dx,dz)>.001)a.root.rotation.y=Math.atan2(dx,dz);
         a.root.position.set(p.x,p.y||0,p.z);walking=t<1;
+        if(t*a.pathLength>=a.exitDistance)a.exitPose=null;
         if(t===1){a.path=null;director.finishExit(a.agent.id);}
       }
       const interaction=interactions.get(a.agent.id);
@@ -365,7 +368,7 @@ function buildCampus() {
       }
       if(!walking&&!interaction){a.root.rotation.y=a.space==='classroom'?Math.PI:0;a.root.position.y=0;}
       const phase=(director.clock+a.seed%23)%24;
-      const pose=interaction?.pose||(walking?'walk':a.space==='classroom'?(activity==='working'?(phase>20?'stretch':phase>16?'read':'typing'):'read'):(phase>20?'wave':'idle'));
+      const pose=interaction?.pose||(walking?(a.exitPose||'walk'):a.space==='classroom'?(activity==='working'?(phase>20?'stretch':phase>16?'read':'typing'):'read'):(phase>20?'wave':'idle'));
       a.animation.update(stale?'idle':pose,dt,!ambientMotion||stale);
       for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;

@@ -48,7 +48,7 @@ export class InteractionDirector {
     if(s.kind==='monkey'&&['mount','traverse','drop'].includes(s.stage))escape=[{...s.position},...(s.stage==='drop'?[]:[monkeyEnd]),MONKEY_EXIT];
     this.active.delete(id);this.due.set(id,this.clock+30);
     if(!holdExit||!escape)this.leases.delete(s.kind);
-    return {position:{...s.position},exit:escape?.at(-1)||null,escape};
+    return {position:{...s.position},exit:escape?.at(-1)||null,escape,exitPose:s.kind==='slide'?'slide':s.kind==='monkey'?'hang':'walk'};
   }
   tick(dt,actors,enabled,angle,automatic=true) {
     this.clock+=enabled?Math.max(0,dt):0;const output=new Map(),seen=new Set(actors.map(a=>a.id));
