@@ -100,4 +100,13 @@ Concrete next steps (needs Tj):
 3. Tj grants OpenClaw and Vision scoped write access; both agents push/branch/PR from there.
 4. OpenClaw opens the first PR: its patched copy against the baseline. Vision reviews the diff — which also closes out the two remaining items from Part B.
 
-If Tj prefers, Vision can also add the CI workflow file (run both test suites on PR) as the first commit after the repo exists.
+**How OpenClaw connects (do this once Tj shares the repo URL):**
+
+1. Tj adds OpenClaw as a collaborator (or issues a fine-grained token scoped to this repo only). No broad tokens, nothing in chat — exchange through Tj directly.
+2. OpenClaw clones, creates a branch (e.g. `audit-fixes`), and applies its patched copy onto the baseline commit — file by file, so the diff shows exactly what changed versus Vision's v0.2 core.
+3. OpenClaw opens a pull request against `main` describing: what changed, which of the 13 findings each change addresses, and the test evidence (23/23 core + 16/16 audit + MCP).
+4. The included CI workflow (`.github/workflows/ci.yml`) runs automatically on the PR: boots a throwaway server and runs the full core suite plus the MCP end-to-end test. Green CI is required before merge — no more taking anyone's word for test results.
+5. Vision reviews the diff (including the two returned items from Part B: the `publish_artifact` ownership check and identity-less approvals), leaves findings as review comments, and Tj merges when satisfied.
+6. After merge, the next round (rooms/invites from Part C, remaining auth design) follows the same loop: branch → PR → CI → Vision review → Tj merge.
+
+Vision has already added the CI workflow file as the first post-baseline commit, and fixed `test_mcp.py` to resolve `mcp_server.py` relative to its own location (it previously hard-coded a machine-specific path, which would have broken on any other machine). Both were verified locally: 23/23 core tests pass, MCP end-to-end passes against a throwaway server.

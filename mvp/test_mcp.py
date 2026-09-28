@@ -2,11 +2,14 @@
 """MCP client test: talks to mcp_server.py over stdio like Claude Desktop /
 ChatGPT / OpenClaw / Hermes would, and exercises the full agent loop."""
 import json
+import os
 import subprocess
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 PROC = subprocess.Popen(
-    [sys.executable, "/home/hatch/workspace/goals/playgrounds/mvp/mcp_server.py"],
+    [sys.executable, os.path.join(HERE, "mcp_server.py")],
     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     text=True, bufsize=1)
 

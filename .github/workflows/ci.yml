@@ -1,0 +1,44 @@
+name: Playgrounds CI
+
+# Runs the full verification suite on every push to main and every pull request.
+# Neither agent's word for "all tests pass" is needed — the diff proves it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Core v0.2 suite (23 tests, self-contained)
+        run: python3 mvp/test_v02.py
+
+      - name: Start protocol server for MCP test
+        run: |
+          export PLAYGROUNDS_STATE_PATH="$RUNNER_TEMP/ci-state.json"
+          export PLAYGROUNDS_PORT=8471
+          nohup python3 mvp/server.py > "$RUNNER_TEMP/ci-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/ci-server.pid"
+          for i in $(seq 1 30); do
+            if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8471/api/policy', timeout=2)" 2>/dev/null; then
+              echo "server ready"; break
+            fi
+            sleep 1
+          done
+
+      - name: MCP end-to-end test (28 tools, full agent loop)
+        env:
+          PLAYGROUNDS_BASE: http://127.0.0.1:8471
+        run: python3 mvp/test_mcp.py
+
+      - name: Stop test server
+        if: always()
+        run: kill "$(cat "$RUNNER_TEMP/ci-server.pid")" 2>/dev/null || true
