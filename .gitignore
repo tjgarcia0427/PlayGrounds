@@ -4,7 +4,10 @@ demo_agents.log
 *.tmp
 __pycache__/
 *.pyc
-live-snapshot*.json
+
+# Runtime state and snapshots are never tracked (issue #4)
+state.json
+*live-snapshot*.json
 
 # Local rendering QA dependencies and generated screenshots
 node_modules/
