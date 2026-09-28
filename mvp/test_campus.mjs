@@ -10,7 +10,8 @@ for(const space of ['classroom','playground']) {
 const from=spot('playground',0),to=spot('classroom',0),path=travelPath(from,to,true);
 assert.deepEqual(walkPoint(path,0),from);
 assert.deepEqual(walkPoint(path,1),to);
-assert.deepEqual(path[1],{x:0,z:5.8});
+assert.ok(path.some(p=>p.x===0 && p.z===5.8));
+assert.ok(path.some(p=>p.x===to.x-.95 && p.z===to.z));
 for(let t=0;t<=1;t+=.01) {const p=walkPoint(path,t);assert.ok(Number.isFinite(p.x)&&Number.isFinite(p.z))}
 assert.equal(visualActivity({last_heartbeat:0,presence:{activity:'working'}},100),'stale');
 assert.equal(visualActivity({last_heartbeat:99,presence:{activity:'working'}},100),'working');

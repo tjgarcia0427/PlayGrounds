@@ -11,9 +11,17 @@ export function spot(space, index) {
 }
 export function travelPath(from, to, changedSpace) {
   // A central garden gate keeps cross-space travel out of the walls/desks.
-  return changedSpace ? [from, {x:0,z:5.8}, {x:to.x,z:5.8}, to] : [from,to];
+  if (!changedSpace) return [from,to];
+  const path=[from];
+  if(from.x>0)path.push({x:from.x-.95,z:from.z},{x:from.x-.95,z:5.8});
+  path.push({x:0,z:5.8});
+  if(to.x>0)path.push({x:to.x-.95,z:5.8},{x:to.x-.95,z:to.z});
+  path.push(to);
+  return path;
 }
 export function walkPoint(path, progress) {
+  if(progress>=1)return {...path[path.length-1]};
+  if(progress<=0)return {...path[0]};
   const lengths = path.slice(1).map((p,i)=>Math.hypot(p.x-path[i].x,p.z-path[i].z));
   const total = lengths.reduce((a,b)=>a+b,0);
   let remaining = Math.max(0,Math.min(1,progress))*total;

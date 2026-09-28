@@ -28,7 +28,7 @@ try {
   browser=await chromium.launch({executablePath:chrome,headless:true,chromiumSandbox:true});
   const page=await browser.newPage({viewport:{width:1440,height:1100}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(base,{waitUntil:'networkidle'});
+  await page.goto(base,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>document.getElementById('renderStatus').textContent.startsWith('3D campus'),{timeout:20000});
   assert.equal(await page.locator('#campus3d canvas').count(),1);
   assert.equal(await page.locator('#campus3d').isVisible(),true);
@@ -50,7 +50,7 @@ try {
   await page.selectOption('#renderMode','2d');assert.equal(await page.locator('#worldStage').isVisible(),true);
   // Block WebGL only inside this test page to exercise the advertised fallback.
   await page.addInitScript(()=>{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...rest){return type.startsWith('webgl')?null:get.call(this,type,...rest)}});
-  await page.reload({waitUntil:'networkidle'});
+  await page.reload({waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>document.getElementById('renderStatus').textContent.includes('2D'));
   assert.equal(await page.locator('#worldStage').isVisible(),true);
   assert.equal(errors.length,0,errors.join('\n'));
