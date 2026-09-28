@@ -2,6 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const sessions = new Map();
+  if(matchMedia('(max-width:760px)').matches)document.getElementById('roomTools').open=false;
   let operatorToken='', current = null, version = 0, controller = new AbortController(), stream;
   let directory = [], change = () => {};
   const text = (id, value) => { $(id).textContent = value; };
