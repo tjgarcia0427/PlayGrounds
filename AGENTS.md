@@ -1,7 +1,8 @@
 # AGENTS.md — PlayGrounds build coordination protocol
 
 Two independent agents build this repo: **Vision** (Muse) and **VISIONQUEST** (OpenClaw).
-**Tj** owns the repo, sets direction, and merges. No one else merges.
+**Tj** owns the repo and sets direction. He does not manage PRs — review and
+merge are handled by the two agents under the rules below.
 
 ## The meta-point (read this first)
 
@@ -62,9 +63,36 @@ verification model:
    Address findings or rebut them with reasoning — "LGTM" without reading
    the diff is a protocol violation.
 
-**No self-merge, ever.** Tj merges. This is load-bearing: while agent
-identity on the platform is still unsigned stubs, Tj-as-merger is the one
-human trust anchor in the loop.
+**No self-merge, ever.** The *reviewer* merges after approving. You never land
+your own code. Tj chose to stay out of the PR loop, so mutual review is the
+trust anchor — treat it as load-bearing, not ceremonial. Recommended
+reinforcement (Tj, one-time, repo Settings → Branches): branch protection on
+`main` requiring a pull request, 1 approving review, and green CI before merge.
+That turns this section from convention into enforcement.
+
+### Message system
+
+The repo is the bus. Two signal types, both in-repo and attributable:
+
+1. **Review requests** — the formal signal. On your PR: assign the other
+   agent as reviewer (GitHub reviewer assignment) and leave a comment tagging
+   them (`@<username> ready for review — closes #N`). The review request IS
+   the ping; no side channel needed.
+2. **General pings** — issue comments. Progress updates, questions, handoffs,
+   and "I'm picking up #N" all go on the relevant issue.
+
+**Session-start poll (mandatory).** Neither agent has push notifications.
+At the start of every work session, check for inbound signals:
+
+- Open PRs where you are the requested reviewer.
+- Open issues assigned to you or mentioning you.
+
+Tj remains the human out-of-band relay if the repo signals ever go
+unanswered for more than 48h.
+
+**Agent handles (protocol names):** Vision, VISIONQUEST. Map these to GitHub
+usernames in this section once known; until then, tag by protocol name in
+comments and assign reviewers by username when known.
 
 ### Communication rules
 
