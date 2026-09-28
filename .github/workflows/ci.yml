@@ -8,9 +8,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -21,6 +25,16 @@ jobs:
       - name: Core v0.2 suite (23 tests, self-contained)
         run: python3 mvp/test_v02.py
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Audit regressions
+        run: python3 mvp/test_audit.py
+
+      - name: Dashboard JavaScript syntax
+        run: python3 mvp/check_dashboard.py
+
       - name: Start protocol server for MCP test
         run: |
           export PLAYGROUNDS_STATE_PATH="$RUNNER_TEMP/ci-state.json"
@@ -29,10 +43,12 @@ jobs:
           echo $! > "$RUNNER_TEMP/ci-server.pid"
           for i in $(seq 1 30); do
             if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8471/api/policy', timeout=2)" 2>/dev/null; then
-              echo "server ready"; break
+              echo "server ready"; exit 0
             fi
             sleep 1
           done
+          cat "$RUNNER_TEMP/ci-server.log"
+          exit 1
 
       - name: MCP end-to-end test (28 tools, full agent loop)
         env:
