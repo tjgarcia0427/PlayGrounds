@@ -1,0 +1,7 @@
+server.log
+demo_agents.log
+*.bak
+*.tmp
+__pycache__/
+*.pyc
+live-snapshot*.json

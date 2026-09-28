@@ -1,0 +1,1785 @@
+#!/usr/bin/env python3
+"""Playgrounds v0.2 — collaboration protocol server. Standard library only.
+
+Control-plane orchestrator for small agent teams: typed task + progress
+ledgers, A2A-style Agent Cards, topology selection (solo-first), learned
+routing in shadow mode, deadbanded reputation, marginal-contribution credit
+settlement, and verification receipts. Credits are internal and non-cash.
+
+API (v0.1 preserved, v0.2 additive):
+  POST /api/agents/register            {name, avatar, color, capabilities[], model,
+                                        skills[], provider, modalities...} -> agent (409 when full: max 4)
+  POST /api/agents/{id}/heartbeat       {status, current_task}
+  GET  /api/agents/{id}/stats          -> submissions, success rate, credits, model tier
+  GET  /api/agents/{id}/card            -> Agent Card: declared claims + observed profile + policy
+  GET  /api/agents/{id}/reputation      -> capability-specific Beta posteriors
+  POST /api/goals                       {title, description, budget} -> goal
+  POST /api/goals/{gid}/plans           {objective, success_criteria, topology_policy} -> plan
+  POST /api/plans/{pid}/replan          {reason, changes} -> new plan version
+  POST /api/goals/{gid}/tasks           {title, bounty, required_capabilities[], effort 1-5,
+                                        task_type, dependencies[], success_criteria, risk,
+                                        decomposability, coupling, input/output contracts} -> task
+  POST /api/tasks/{tid}/clarify        {success_criteria, ...}  (needs_input -> open)
+  POST /api/tasks/{tid}/claim           {agent_id, idempotency_key?}  (open -> claimed; escrowed)
+  POST /api/tasks/{tid}/progress        {agent_id, note, progress_pct, idempotency_key?}
+  POST /api/tasks/{tid}/artifacts       {agent_id, kind, name, content, media_type} -> digest
+  POST /api/tasks/{tid}/complete        {agent_id, result, idempotency_key?} (claimed -> pending_verification)
+  POST /api/tasks/{tid}/verify          {approved, approved_credits?, verifier_agent_id?,
+                                        quality, confidence, rubric, checks} -> receipt + settlement
+  POST /api/tasks/{tid}/cancel          {reason, by}
+  GET  /api/tasks/{tid}/suggest         -> heuristic ranked suggestions (cold-start prior)
+  GET  /api/tasks/{tid}/route           -> heuristic + learned-shadow rankings
+  GET  /api/tasks/{tid}/topology        -> topology decision + counterfactual
+  GET  /api/decisions/{id}              -> a recorded routing/topology decision
+  GET  /api/ledger?goal_id=&since=&type= -> durable typed event ledger
+  GET  /api/policy                      -> trust-policy groundwork (no real auth yet)
+  POST /api/messages                    {from_agent, to_agent?, goal_id?, text}
+  GET  /api/messages?goal_id=&since=
+  POST /api/goals/{gid}/context         {key, value?, agent_id} / append {key, entry, agent_id}
+  GET  /api/goals/{gid}/context
+  GET  /api/state                       full state snapshot
+  GET  /api/events?since=N              server-sent events (live stream)
+  GET  /.well-known/agent-card.json     playground Agent Card (A2A discovery)
+  POST /a2a                             minimal A2A JSON-RPC: card/get, task/send, task/get, task/cancel
+  GET  /avatars/plushN.png              agent avatar images
+  GET  /                               the dashboard
+"""
+import hashlib
+import json
+import math
+import os
+import shutil
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+# Environment overrides for isolated testing. Production runs ignore these
+# and always use the real state file on 127.0.0.1:8471.
+STATE_PATH = os.environ.get("PLAYGROUNDS_STATE_PATH",
+                            os.path.join(ROOT, "state.json"))
+DASHBOARD_PATH = os.path.join(ROOT, "dashboard.html")
+AVATAR_DIR = os.path.join(ROOT, "avatars")
+PORT = int(os.environ.get("PLAYGROUNDS_PORT", "8471"))
+MAX_AGENTS = 4  # research-backed team cap: small teams of 2-4 outperform larger ones
+
+SCHEMA_VERSION = 2
+CLAIM_WINDOW = 300       # seconds a claim lease lasts without progress
+STALL_AFTER = 120        # seconds without progress before a stall is flagged
+STALL_LIMIT = 2          # stalls before the orchestrator auto-cancels + replans
+EVENTS_CAP = 200         # SSE ring buffer
+LEDGER_CAP = 5000        # durable typed ledger
+ROUTING_LOG_CAP = 2000
+IDEMPOTENCY_TTL = 86400
+
+lock = threading.RLock()
+subscribers = set()
+
+
+def new_id(prefix):
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+
+
+def utcnow():
+    return time.time()
+
+
+# ---------------------------------------------------------------- state ---
+
+def blank_state():
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "server_salt": uuid.uuid4().hex,
+        "agents": {}, "goals": {}, "tasks": {}, "plans": {},
+        "ledger": [], "ledger_seq": 0,
+        "artifacts": {}, "reputation": {}, "routing_log": [],
+        "decisions": {}, "idempotency": {},
+        "events": [], "seq": 0,
+        "context": {}, "agent_stats": {}, "messages": [], "msg_seq": 0,
+        "policy": {
+            "auth_required": False,
+            "note": ("Local pilot groundwork: tenant_id, scopes, and idempotency "
+                     "keys are modeled, but no real authentication or authorization "
+                     "is enforced. Do not expose beyond 127.0.0.1."),
+            "max_agents": MAX_AGENTS,
+            "credits_are_non_cash": True,
+        },
+    }
+
+
+def blank_agent_stats():
+    return {"completed": 0, "verified": 0, "rejected": 0,
+            "work_seconds": 0.0, "credits_earned": 0, "review_credits_earned": 0}
+
+
+def load_state():
+    if os.path.exists(STATE_PATH):
+        with open(STATE_PATH) as f:
+            return json.load(f)
+    return blank_state()
+
+
+state = load_state()
+
+
+def migrate_state():
+    """One-time v0.1 -> v0.2 migration: keep the original JSON as a read-only
+    backup, fill new fields with defaults, emit a ledger event."""
+    if state.get("schema_version") == SCHEMA_VERSION:
+        return
+    bak = STATE_PATH + ".v01.bak"
+    if os.path.exists(STATE_PATH) and not os.path.exists(bak):
+        shutil.copy(STATE_PATH, bak)
+    blank = blank_state()
+    for k, v in blank.items():
+        state.setdefault(k, v)
+    # agents
+    for i, a in enumerate(state["agents"].values()):
+        a.setdefault("agent_card", {})
+        a.setdefault("plush", f"plush{(i % 4) + 1}.png")
+        a.setdefault("scopes", ["*"])
+        a.setdefault("tenant_id", "local")
+        a.setdefault("observed", {"tasks": 0, "verified": 0,
+                                  "quality_sum": 0.0, "latency_sum": 0.0,
+                                  "cost_sum": 0.0})
+    # goals
+    for g in state["goals"].values():
+        g.setdefault("tenant_id", "local")
+        g.setdefault("review_pool_pct", 0.10)
+        g.setdefault("plan_ids", [])
+    # tasks
+    for t in state["tasks"].values():
+        t.setdefault("task_type", "general")
+        t.setdefault("dependencies", [])
+        t.setdefault("success_criteria", "")
+        t.setdefault("risk", "medium")
+        t.setdefault("decomposability", 0.3)
+        t.setdefault("coupling", 0.7)
+        t.setdefault("input_contract", {})
+        t.setdefault("output_contract", {})
+        t.setdefault("topology", "solo")
+        t.setdefault("plan_id", None)
+        t.setdefault("task_version", 1)
+        t.setdefault("artifact_ids", [])
+        t.setdefault("progress", [])
+        t.setdefault("lease", {"holder": t.get("agent_id"),
+                               "expires": t.get("claim_expires", 0),
+                               "last_progress_at": t.get("claimed_at") or 0})
+        t.setdefault("stall_count", 0)
+        t.setdefault("verification_receipt", None)
+        t.setdefault("settlement_receipt", None)
+    if not state.get("server_salt"):
+        state["server_salt"] = uuid.uuid4().hex
+    # backfill the hash chain for pre-v0.2 ledger entries so the chain
+    # verifies from the migration point forward
+    prev = GENESIS_HASH
+    for e in state["ledger"]:
+        if "checksum" not in e:
+            e["prev"] = prev
+            e["checksum"] = ledger_checksum(e, prev)
+        prev = e["checksum"]
+    state["schema_version"] = SCHEMA_VERSION
+    save_state()
+    ledger_append("schema_migrated",
+                  {"from": 1, "to": SCHEMA_VERSION, "backup": bak},
+                  actor="system")
+
+
+def save_state():
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_PATH)
+
+
+# ------------------------------------------------------------- events -----
+
+def emit(etype, data):
+    """Live SSE ring buffer (ephemeral, for the dashboard)."""
+    with lock:
+        state["seq"] += 1
+        ev = {"seq": state["seq"], "ts": utcnow(), "type": etype, "data": data}
+        state["events"].append(ev)
+        state["events"] = state["events"][-EVENTS_CAP:]
+        save_state()
+        payload = f"data: {json.dumps(ev)}\n\n".encode()
+        dead = []
+        for sub in list(subscribers):
+            try:
+                sub.write(payload)
+                sub.flush()
+            except Exception:
+                dead.append(sub)
+        for d in dead:
+            subscribers.discard(d)
+    return ev
+
+
+GENESIS_HASH = "genesis:" + hashlib.sha256(b"playgrounds-v02-ledger").hexdigest()[:32]
+
+
+def ledger_checksum(entry, prev):
+    """Checksum of a ledger entry chained to the previous entry's checksum."""
+    body = {"seq": entry["seq"], "ts": entry["ts"], "type": entry["type"],
+            "actor": entry["actor"], "goal_id": entry.get("goal_id"),
+            "task_id": entry.get("task_id"), "data": entry.get("data"),
+            "prev": prev}
+    return "sha256:" + hashlib.sha256(
+        json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def ledger_append(etype, data, actor="system", goal_id=None, task_id=None,
+                  idempotency_key=None, prior_version=None):
+    """Durable, typed, append-only ledger. Every state transition lands here
+    with one authoritative actor, an optional idempotency key, and a hash
+    chain (each entry's checksum covers the previous entry's checksum), so
+    tampering with history breaks the chain."""
+    with lock:
+        last = state["ledger"][-1] if state["ledger"] else None
+        prev = last.get("checksum", GENESIS_HASH) if last else GENESIS_HASH
+        state["ledger_seq"] += 1
+        entry = {"seq": state["ledger_seq"], "ts": utcnow(), "type": etype,
+                 "actor": actor, "goal_id": goal_id, "task_id": task_id,
+                 "idempotency_key": idempotency_key,
+                 "prior_version": prior_version, "data": data, "prev": prev}
+        entry["checksum"] = ledger_checksum(entry, prev)
+        state["ledger"].append(entry)
+        state["ledger"] = state["ledger"][-LEDGER_CAP:]
+        save_state()
+    return entry
+
+
+def ledger_digest():
+    """Deterministic digest of the ledger for replay checks."""
+    h = hashlib.sha256()
+    for e in state["ledger"]:
+        h.update(json.dumps(
+            {"seq": e["seq"], "checksum": e.get("checksum"),
+             "type": e["type"], "actor": e["actor"],
+             "task_id": e.get("task_id"), "data": e.get("data")},
+            sort_keys=True).encode())
+    return "sha256:" + h.hexdigest()
+
+
+def verify_ledger_chain():
+    """Recompute the hash chain over the retained window. Returns
+    (ok, failing_seq_or_None). The oldest retained entry's `prev` is
+    trusted as the window root (older history may be truncated by LEDGER_CAP)."""
+    ok, failing = True, None
+    for i, e in enumerate(state["ledger"]):
+        if ledger_checksum(e, e.get("prev", GENESIS_HASH)) != e.get("checksum"):
+            return False, e["seq"]
+        if i > 0 and e.get("prev") != state["ledger"][i - 1].get("checksum"):
+            return False, e["seq"]
+    return ok, failing
+
+
+# Run the v0.1 -> v0.2 migration now that save_state/ledger_append exist.
+migrate_state()
+
+
+# ------------------------------------------------- credit economy (v0.1) ---
+
+# Heuristic model-strength tiers, derived from the agent's declared model name.
+# 1 = tiny/local, 5 = frontier. Unknown models default to 3. This is a
+# cold-start prior only — observed outcomes dominate routing as data accrues.
+_MODEL_TIER_KEYWORDS = [
+    (2, ["tiny", "nano", "1b", "3b", "7b"]),
+    (3, ["haiku", "mini", "flash", "8b", "13b", "gpt-3.5"]),
+    (4, ["sonnet", "gpt-4", "o1", "gemini-pro"]),
+    (5, ["opus", "gpt-5", "o3", "ultra", "frontier"]),
+]
+
+
+def model_tier(model_name):
+    n = (model_name or "").lower()
+    for tier, keys in _MODEL_TIER_KEYWORDS:
+        if any(k in n for k in keys):
+            return tier
+    return 3
+
+
+def clamp_effort(e):
+    try:
+        return max(1, min(5, int(e)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def clamp01(x, default=0.0):
+    try:
+        return max(0.0, min(1.0, float(x)))
+    except (TypeError, ValueError):
+        return default
+
+
+def check_idempotency(key):
+    """Return stored result if this key was already processed, else None."""
+    if not key:
+        return None
+    with lock:
+        rec = state["idempotency"].get(key)
+        if rec and utcnow() - rec["ts"] < IDEMPOTENCY_TTL:
+            out = dict(rec["result"])
+            out["deduplicated"] = True
+            return out
+        if rec:
+            del state["idempotency"][key]
+    return None
+
+
+def record_idempotency(key, result):
+    if not key:
+        return
+    with lock:
+        state["idempotency"][key] = {"ts": utcnow(), "result": result}
+        if len(state["idempotency"]) > 5000:
+            oldest = sorted(state["idempotency"],
+                            key=lambda k: state["idempotency"][k]["ts"])[:1000]
+            for k in oldest:
+                del state["idempotency"][k]
+        save_state()
+
+
+def sweep_expired_claims():
+    """Release claims whose lease expired: escrow back to the goal budget,
+    task returns to open. Called opportunistically on heartbeats and claims
+    so no background thread is needed."""
+    now = utcnow()
+    released = []
+    with lock:
+        for t in state["tasks"].values():
+            lease = t.get("lease", {})
+            if t["status"] == "claimed" and lease.get("expires", 0) < now:
+                g = state["goals"].get(t["goal_id"])
+                if g is not None:
+                    g["budget_available"] = g.get("budget_available", 0) + t.get("escrow", 0)
+                t["escrow"] = 0
+                t["status"] = "open"
+                t["agent_id"] = None
+                t["lease"] = {"holder": None, "expires": 0, "last_progress_at": 0}
+                released.append(t["id"])
+                ledger_append("lease_expired", {"escrow_returned": True},
+                              actor="orchestrator", goal_id=t["goal_id"],
+                              task_id=t["id"])
+        if released:
+            save_state()
+    for tid in released:
+        emit("task_expired", {"task_id": tid})
+
+
+def detect_stalls():
+    """Orchestrator stall detection: a claimed task with no decision-changing
+    progress across the stall window is flagged; after STALL_LIMIT stalls the
+    orchestrator cancels the lease and the task becomes replannable."""
+    now = utcnow()
+    for t in list(state["tasks"].values()):
+        if t["status"] != "claimed":
+            continue
+        lease = t.get("lease", {})
+        last = lease.get("last_progress_at") or t.get("claimed_at") or 0
+        if now - last < STALL_AFTER:
+            continue
+        with lock:
+            t = state["tasks"].get(t["id"])
+            if not t or t["status"] != "claimed":
+                continue
+            t["stall_count"] = t.get("stall_count", 0) + 1
+            lease = t.setdefault("lease", {})
+            lease["last_progress_at"] = now  # don't re-flag every sweep
+            ledger_append("stall_detected",
+                          {"stall_count": t["stall_count"],
+                           "idle_seconds": round(now - last, 1)},
+                          actor="orchestrator", goal_id=t["goal_id"],
+                          task_id=t["id"])
+            save_state()
+        emit("stall_detected", {"task_id": t["id"],
+                                "stall_count": t["stall_count"]})
+        if t["stall_count"] >= STALL_LIMIT:
+            cancel_task(t["id"], by="orchestrator",
+                        reason=f"stalled {t['stall_count']}x with no progress; "
+                               "lease cancelled for replanning")
+
+
+def cancel_task(tid, by="human", reason="cancelled"):
+    with lock:
+        t = state["tasks"].get(tid)
+        if not t or t["status"] in ("done", "cancelled"):
+            return None
+        prior = t["status"]
+        g = state["goals"].get(t["goal_id"])
+        if g is not None and t.get("escrow"):
+            g["budget_available"] = g.get("budget_available", 0) + t["escrow"]
+        t["escrow"] = 0
+        t["status"] = "cancelled"
+        t["lease"] = {"holder": None, "expires": 0, "last_progress_at": 0}
+        t["task_version"] = t.get("task_version", 1) + 1
+        ledger_append("task_cancelled",
+                      {"prior_status": prior, "reason": reason,
+                       "task_version": t["task_version"]},
+                      actor=by, goal_id=t["goal_id"], task_id=tid,
+                      prior_version=prior)
+        save_state()
+    emit("task_cancelled", {"task_id": tid, "reason": reason})
+    return t
+
+# ------------------------------------------- orchestrator + topology ------
+
+def create_plan(goal_id, objective, success_criteria="", topology_policy="solo_first",
+                actor="human"):
+    with lock:
+        if goal_id not in state["goals"]:
+            return None
+        pid = new_id("plan")
+        plan = {"id": pid, "goal_id": goal_id, "version": 1,
+                "objective": objective, "success_criteria": success_criteria,
+                "topology_policy": topology_policy, "task_ids": [],
+                "status": "active", "created_at": utcnow(), "history": []}
+        state["plans"][pid] = plan
+        state["goals"][goal_id].setdefault("plan_ids", []).append(pid)
+        ledger_append("plan_created",
+                      {"objective": objective, "version": 1,
+                       "topology_policy": topology_policy},
+                      actor=actor, goal_id=goal_id)
+        save_state()
+    emit("plan_created", {"plan_id": pid, "goal_id": goal_id})
+    return plan
+
+
+def replan(plan_id, reason, changes=None, actor="human"):
+    with lock:
+        plan = state["plans"].get(plan_id)
+        if not plan:
+            return None
+        plan["version"] += 1
+        plan["history"].append({"version": plan["version"], "reason": reason,
+                                "changes": changes or {}, "at": utcnow(),
+                                "by": actor})
+        if changes:
+            for k in ("objective", "success_criteria", "topology_policy"):
+                if k in changes:
+                    plan[k] = changes[k]
+        ledger_append("task_replanned",
+                      {"plan_id": plan_id, "version": plan["version"],
+                       "reason": reason},
+                      actor=actor, goal_id=plan["goal_id"])
+        save_state()
+    emit("plan_replanned", {"plan_id": plan_id, "version": plan["version"],
+                            "reason": reason})
+    return plan
+
+
+def _best_capability_overlap(task):
+    """Best heuristic capability overlap across agents (0..1). Used to gauge
+    routing uncertainty for the topology decision."""
+    req = task.get("required_capabilities", []) or []
+    best = 0.0
+    for a in state["agents"].values():
+        caps = a.get("capabilities", []) or []
+        ov = (len(set(req) & set(caps)) / len(req)) if req else 1.0
+        best = max(best, ov)
+    return best
+
+
+def select_topology(task, team_size_hint=2):
+    """Solo-first topology selector (plan pseudocode, faithful subset).
+
+    Solo is the default. A team is chosen only when the task is highly
+    decomposable, loosely coupled, AND the expected team utility beats solo
+    by >= 10% after coordination cost. Records the decision and its
+    counterfactual; high risk or high uncertainty requires human approval.
+    """
+    decomp = clamp01(task.get("decomposability", 0.3), 0.3)
+    coupling = clamp01(task.get("coupling", 0.7), 0.7)
+    risk = (task.get("risk") or "medium").lower()
+    has_deps = bool(task.get("dependencies"))
+    registered = len(state["agents"])
+
+    uncertainty = 1.0 - _best_capability_overlap(task)
+    reasons = []
+    topology = "solo"
+    team_size = 1
+
+    if decomp >= 0.70 and coupling <= 0.30 and registered >= 2:
+        # expected utility via the heuristic scorer, team vs solo
+        sugg = suggest_agents(task)
+        solo_u = sugg[0]["score"] / 100.0 if sugg else 0.5
+        team_n = max(2, min(team_size_hint, registered, MAX_AGENTS))
+        coord_cost = 0.08 * (team_n - 1)  # coordination overhead fraction
+        synergy = 1.0 + 0.5 * decomp * (team_n - 1)  # parallel speedup
+        team_u = solo_u * synergy * (1.0 - coord_cost)
+        if team_u >= solo_u * 1.10:
+            topology = "specialist_dag" if has_deps else "sealed_scouts"
+            team_size = team_n
+            reasons.append(
+                f"decomposability {decomp:.2f}>=0.70 and coupling "
+                f"{coupling:.2f}<=0.30; expected team utility {team_u:.2f} "
+                f"beats solo {solo_u:.2f} by >=10% after coordination cost")
+        else:
+            reasons.append(
+                f"team utility {team_u:.2f} does not beat solo {solo_u:.2f} "
+                "by 10% after coordination cost — staying solo")
+    else:
+        why = []
+        if decomp < 0.70:
+            why.append(f"decomposability {decomp:.2f} < 0.70")
+        if coupling > 0.30:
+            why.append(f"coupling {coupling:.2f} > 0.30")
+        if registered < 2:
+            why.append("fewer than 2 agents registered")
+        reasons.append("solo default: " + "; ".join(why))
+
+    approval_required = (risk == "high") or (uncertainty >= 0.25)
+    if approval_required:
+        reasons.append(
+            f"human approval required (risk={risk}, uncertainty={uncertainty:.2f})")
+
+    did = new_id("decision")
+    decision = {"id": did, "kind": "topology", "task_id": task["id"],
+                "ts": utcnow(),
+                "input": {"decomposability": decomp, "coupling": coupling,
+                          "risk": risk, "registered_agents": registered},
+                "output": {"topology": topology, "team_size": team_size,
+                           "approval_required": approval_required,
+                           "uncertainty": round(uncertainty, 3)},
+                "counterfactual": ("solo" if topology != "solo"
+                                   else "sealed_scouts"),
+                "reasons": reasons}
+    with lock:
+        state["decisions"][did] = decision
+        ledger_append("topology_selected",
+                      {"topology": topology, "team_size": team_size,
+                       "approval_required": approval_required,
+                       "counterfactual": decision["counterfactual"],
+                       "reasons": reasons},
+                      actor="orchestrator", goal_id=task["goal_id"],
+                      task_id=task["id"])
+        save_state()
+    emit("topology_selected", {"task_id": task["id"], "topology": topology,
+                               "decision_id": did})
+    return decision
+
+
+def orchestrate_task(task):
+    """Runs on task creation: clarification gate, then topology selection."""
+    # Rule 3 (structured delegation): hard tasks need explicit success criteria.
+    # An agent that lacks specifics must ask, not guess.
+    if clamp_effort(task.get("effort", 3)) >= 4 and not task.get("success_criteria"):
+        with lock:
+            task["status"] = "needs_input"
+            ledger_append("clarification_required",
+                          {"missing": ["success_criteria"],
+                           "note": "effort>=4 tasks need explicit success criteria"},
+                          actor="orchestrator", goal_id=task["goal_id"],
+                          task_id=task["id"])
+            save_state()
+        emit("clarification_required", {"task_id": task["id"]})
+        return {"status": "needs_input"}
+    decision = select_topology(task)
+    with lock:
+        t = state["tasks"].get(task["id"])
+        if t:
+            t["topology"] = decision["output"]["topology"]
+            save_state()
+    return decision
+
+
+# ------------------------------------------------------- Agent Cards ------
+
+def build_agent_card(agent):
+    """A2A-style Agent Card. Declared claims and observed performance are kept
+    separate: a card is a claim; only verified outcomes become reputation."""
+    declared = agent.get("agent_card", {}) or {}
+    skills = declared.get("skills") or [
+        {"id": c, "name": c, "tags": [c]}
+        for c in (agent.get("capabilities") or [])]
+    obs = agent.get("observed", {}) or {}
+    card = {
+        "name": agent.get("name"), "agent_id": agent.get("id"),
+        "description": declared.get("description", ""),
+        "version": declared.get("version", "0.2.0"),
+        "provider": declared.get("provider", "unknown"),
+        "model": agent.get("model", "unknown"),
+        "model_tier": agent.get("model_tier", 3),
+        "supportedInterfaces": declared.get("supportedInterfaces", []),
+        "capabilities": {"streaming": True},
+        "defaultInputModes": declared.get("input_modalities", ["text"]),
+        "defaultOutputModes": declared.get("output_modalities", ["text"]),
+        "skills": skills,
+        "cost": {"per_task_credits": declared.get("cost_per_task")},
+        "rateLimits": declared.get("rate_limits", {}),
+        "securitySchemes": declared.get("auth", {}),
+        "availability": declared.get("availability", agent.get("status", "idle")),
+        "plush": agent.get("plush"),
+        "observed": {
+            "tasks": obs.get("tasks", 0),
+            "verified": obs.get("verified", 0),
+            "mean_quality": round(obs.get("quality_sum", 0.0)
+                                  / max(1, obs.get("verified", 0)), 3),
+            "mean_latency_s": round(obs.get("latency_sum", 0.0)
+                                    / max(1, obs.get("tasks", 0)), 2),
+            "disclaimer": ("Observed history is measured by this "
+                           "playground; every other field is the agent's "
+                           "own declared claim, not a verified fact."),
+        },
+        "policy": {"tenant_id": agent.get("tenant_id", "local"),
+                   "scopes": agent.get("scopes", ["*"]),
+                   "max_bounty": declared.get("max_bounty")},
+    }
+    return card
+
+
+def playground_card():
+    return {
+        "name": "Playgrounds",
+        "description": ("Private pilot collaboration playground: small agent "
+                        "teams coordinate on shared goals with verified "
+                        "outcomes and non-cash credits."),
+        "version": "0.2.0",
+        "protocol": "a2a/0.2",
+        "protocolBinding": "JSONRPC",
+        "maxAgents": MAX_AGENTS,
+        "registeredAgents": len(state["agents"]),
+        "capabilities": {"streaming": True, "topologies": ["solo", "sealed_scouts",
+                                                          "specialist_dag"]},
+        "defaultInputModes": ["text", "data"],
+        "defaultOutputModes": ["text", "data", "file"],
+    }
+
+
+# --------------------------------------------- learned routing (shadow) ---
+
+def _routing_history(agent_id):
+    return [e for e in state["routing_log"] if e.get("agent_id") == agent_id]
+
+
+def learned_scores(task):
+    """Interpretable outcome-trained scorer. Runs in SHADOW mode: it returns
+    rankings beside the heuristic, but never assigns. Promotion requires the
+    plan's held-out gate (>=100 verified tasks); until then this is evidence
+    collection, not control."""
+    req = task.get("required_capabilities", []) or []
+    task_value = float(task.get("bounty", 10) or 10)
+    ranked = []
+    for a in state["agents"].values():
+        hist = _routing_history(a["id"])
+        n = len(hist)
+        verified = sum(1 for h in hist if h.get("outcome") == "verified")
+        p_accept = (verified + 1) / (n + 2)  # Laplace
+        q = (sum(h.get("quality", 0.5) for h in hist) / n) if n else 0.5
+        avg_cost = (sum(h.get("credits", 0) for h in hist) / n) if n else task_value * 0.5
+        avg_lat = (sum(h.get("latency_s", 60) for h in hist) / n) if n else 60.0
+        caps = a.get("capabilities", []) or []
+        overlap = (len(set(req) & set(caps)) / len(req)) if req else 1.0
+        expected_utility = (p_accept * q * overlap * task_value
+                            - 0.5 * avg_cost - 0.02 * avg_lat)
+        uncertainty = 1.0 / math.sqrt(n + 1)
+        ranked.append({"agent_id": a["id"], "name": a.get("name"),
+                       "expected_utility": round(expected_utility, 2),
+                       "p_accept": round(p_accept, 3),
+                       "mean_quality": round(q, 3),
+                       "avg_cost": round(avg_cost, 2),
+                       "avg_latency_s": round(avg_lat, 1),
+                       "uncertainty": round(uncertainty, 3),
+                       "samples": n})
+    ranked.sort(key=lambda r: -r["expected_utility"])
+    return {"mode": "shadow",
+            "promoted": False,
+            "gate": ("learned routing controls assignments only after >=100 "
+                     "verified tasks and a held-out win vs the heuristic"),
+            "learned": ranked,
+            "heuristic": suggest_agents(task)}
+
+
+def log_routing_outcome(task, agent_id, outcome, quality, confidence,
+                        latency_s, credits):
+    with lock:
+        state["routing_log"].append({
+            "task_id": task["id"], "agent_id": agent_id,
+            "skills": task.get("required_capabilities", []) or [],
+            "task_type": task.get("task_type", "general"),
+            "effort": task.get("effort", 3),
+            "outcome": outcome, "quality": quality, "confidence": confidence,
+            "latency_s": latency_s, "credits": credits, "ts": utcnow()})
+        state["routing_log"] = state["routing_log"][-ROUTING_LOG_CAP:]
+        save_state()
+
+
+# ------------------------------------------- reputation (deadbanded) ------
+# Capability-specific Beta(2,2) posteriors. Updates happen ONLY outside the
+# deadband: high-confidence clear signal moves the score; ambiguous or
+# low-confidence outcomes are recorded but leave reputation untouched.
+
+DEADBAND_HIGH_Q, DEADBAND_HIGH_C = 0.75, 0.75
+DEADBAND_LOW_Q = 0.35
+
+
+def beta_mean(alpha, beta):
+    return alpha / (alpha + beta)
+
+
+def beta_interval(alpha, beta):
+    # Normal approximation to the Beta posterior interval.
+    m = beta_mean(alpha, beta)
+    var = alpha * beta / ((alpha + beta) ** 2 * (alpha + beta + 1))
+    half = 1.96 * math.sqrt(var)
+    return [round(max(0.0, m - half), 3), round(min(1.0, m + half), 3)]
+
+
+def get_reputation(agent_id):
+    return state["reputation"].get(agent_id, {})
+
+
+def update_reputation(agent_id, skills, quality, confidence):
+    """Deadbanded update. Returns the list of skills whose posterior moved."""
+    skills = skills or ["general"]
+    moved = []
+    w = clamp01(confidence, 0.0)
+    with lock:
+        rep = state["reputation"].setdefault(agent_id, {})
+        for s in skills:
+            post = rep.setdefault(s, {"alpha": 2.0, "beta": 2.0, "n": 0,
+                                      "neutral": 0, "last_update": 0})
+            if quality >= DEADBAND_HIGH_Q and confidence >= DEADBAND_HIGH_C:
+                post["alpha"] += w
+                post["n"] += 1
+                post["last_update"] = utcnow()
+                moved.append(s)
+            elif quality <= DEADBAND_LOW_Q and confidence >= DEADBAND_HIGH_C:
+                post["beta"] += w
+                post["n"] += 1
+                post["last_update"] = utcnow()
+                moved.append(s)
+            else:
+                post["neutral"] = post.get("neutral", 0) + 1  # recorded only
+        save_state()
+    if moved:
+        ledger_append("reputation_updated",
+                      {"skills": moved, "quality": quality,
+                       "confidence": confidence},
+                      actor="orchestrator", task_id=None)
+        emit("reputation_updated", {"agent_id": agent_id, "skills": moved})
+    return moved
+
+
+def reputation_view(agent_id):
+    out = {}
+    for skill, post in get_reputation(agent_id).items():
+        a, b = post["alpha"], post["beta"]
+        out[skill] = {"mean": round(beta_mean(a, b), 3),
+                      "interval": beta_interval(a, b),
+                      "directional_updates": post["n"],
+                      "neutral_recorded": post.get("neutral", 0),
+                      "last_update": post["last_update"]}
+    return out
+
+
+# ------------------------------------------------------- artifacts --------
+
+def publish_artifact(task_id, agent_id, kind, name, content, media_type,
+                     idempotency_key=None):
+    dup = check_idempotency(idempotency_key) if idempotency_key else None
+    if dup:
+        return dup
+    raw = (content or "").encode() if isinstance(content, str) else b""
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    with lock:
+        if task_id not in state["tasks"]:
+            return {"error": "unknown task"}
+        if agent_id not in state["agents"]:
+            return {"error": "unknown agent"}
+        aid = new_id("artifact")
+        art = {"id": aid, "task_id": task_id, "agent_id": agent_id,
+               "kind": kind or "result", "name": name or "artifact",
+               "digest": digest, "size": len(raw),
+               "media_type": media_type or "text/plain",
+               "provenance": {"producer": agent_id, "at": utcnow()},
+               "content": content if isinstance(content, str) and len(raw) < 20000 else None,
+               "created_at": utcnow()}
+        state["artifacts"][aid] = art
+        t = state["tasks"][task_id]
+        t["artifact_ids"].append(aid)
+        t["task_version"] = t.get("task_version", 1) + 1
+        ledger_append("artifact_published",
+                      {"artifact_id": aid, "digest": digest, "kind": art["kind"],
+                       "size": art["size"]},
+                      actor=agent_id, goal_id=t["goal_id"], task_id=task_id,
+                      idempotency_key=idempotency_key,
+                      prior_version=t["task_version"] - 1)
+        save_state()
+    emit("artifact_published", {"task_id": task_id, "artifact_id": aid,
+                                "digest": digest})
+    result = {"artifact": art}
+    record_idempotency(idempotency_key, result)
+    return result
+
+
+def artifact_text(aid):
+    a = state["artifacts"].get(aid, {})
+    return a.get("content") or ""
+
+
+def jaccard(a, b):
+    sa, sb = set(a.lower().split()), set(b.lower().split())
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
+# -------------------------------------- verification + settlement --------
+
+def run_deterministic_checks(task):
+    """Executable checks first, judgment second. Returns [{id, result, detail}]."""
+    checks = []
+    checks.append({"id": "result_present",
+                   "result": "pass" if task.get("result") else "fail",
+                   "blocking": True,
+                   "detail": "completion submitted a result string"})
+    # artifact integrity: digests recompute
+    ok = True
+    for aid in task.get("artifact_ids", []):
+        art = state["artifacts"].get(aid)
+        if not art:
+            ok = False
+            break
+        raw = (art.get("content") or "").encode()
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != art.get("digest"):
+            ok = False
+            break
+    checks.append({"id": "artifact_integrity",
+                   "result": "pass" if ok else "fail",
+                   "blocking": True,
+                   "detail": f"{len(task.get('artifact_ids', []))} artifacts re-hashed"})
+    # duplicate / near-duplicate detection across this task's artifacts
+    dup = False
+    texts = [(aid, artifact_text(aid)) for aid in task.get("artifact_ids", [])]
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            if texts[i][1] and jaccard(texts[i][1], texts[j][1]) > 0.85:
+                dup = True
+    checks.append({"id": "duplicate_artifacts",
+                   "result": "fail" if dup else "pass",
+                   "blocking": False,
+                   "detail": "near-duplicate artifacts found" if dup
+                   else "no near-duplicates"})
+    # output contract fields present
+    contract = task.get("output_contract") or {}
+    required = contract.get("required_fields", [])
+    missing = [f for f in required if f not in (task.get("result") or "")]
+    checks.append({"id": "contract_fields",
+                   "result": "pass" if not missing else "fail",
+                   "blocking": False,
+                   "detail": f"missing: {missing}" if missing else "all required fields present"})
+    return checks
+
+
+def marginal_shares(task, artifact_scores):
+    """COMA-style leave-one-out: each contributor's share is the verified
+    utility lost if their work is held out. Near-duplicate work naturally
+    earns ~nothing. Solo tasks trivially give 1.0 to the worker."""
+    contributors = []
+    for aid in task.get("artifact_ids", []):
+        art = state["artifacts"].get(aid)
+        if art and art["agent_id"] not in contributors:
+            contributors.append(art["agent_id"])
+    if not contributors:
+        if task.get("agent_id"):
+            contributors = [task["agent_id"]]
+        else:
+            return []
+    if len(contributors) == 1:
+        return [{"agent_id": contributors[0], "marginal": 1.0}]
+    # value of the full set vs each hold-one-out set
+    def value(agent_subset):
+        total = 0.0
+        for aid in task.get("artifact_ids", []):
+            art = state["artifacts"].get(aid)
+            if art and art["agent_id"] in agent_subset:
+                total += artifact_scores.get(aid, 1.0)
+        return total
+    v_all = value(set(contributors))
+    deltas = {}
+    for c in contributors:
+        rest = set(contributors) - {c}
+        deltas[c] = max(0.0, value(set(contributors)) - value(rest))
+    total = sum(deltas.values()) or 1.0
+    return [{"agent_id": c, "marginal": round(deltas[c] / total, 4)}
+            for c in contributors]
+
+
+def verify_task(task_id, approved, approved_credits=None, verifier_agent_id=None,
+                quality=0.5, confidence=0.5, rubric=None, checks=None,
+                artifact_scores=None, idempotency_key=None):
+    dup = check_idempotency(idempotency_key) if idempotency_key else None
+    if dup:
+        return dup
+    with lock:
+        task = state["tasks"].get(task_id)
+        if not task:
+            return {"error": "unknown task", "code": 404}
+        if task["status"] != "pending_verification":
+            return {"error": "task not awaiting verification", "code": 409}
+        if verifier_agent_id and verifier_agent_id == task.get("agent_id"):
+            return {"error": "agents cannot verify their own work", "code": 403}
+        goal = state["goals"].get(task["goal_id"], {})
+        escrow = task.get("escrow", 0)
+        worker_id = task.get("agent_id")
+        approved = bool(approved)
+        quality = clamp01(quality, 0.5)
+        confidence = clamp01(confidence, 0.5)
+
+        det_checks = run_deterministic_checks(task)
+        if checks:
+            det_checks.extend(checks)
+        blocking_failed = any(c["result"] == "fail" and c.get("blocking")
+                              for c in det_checks)
+        # Legacy v0.1 verification shape (approved_credits, no v0.2 signals):
+        # v0.1 had no deterministic gate and paid the worker in full.
+        legacy = (approved_credits is not None and checks is None
+                  and artifact_scores is None)
+        if blocking_failed and not legacy:
+            approved = False
+
+        verifier = ({"type": "agent", "id": verifier_agent_id}
+                    if verifier_agent_id else {"type": "human", "id": "human"})
+
+        receipt = {
+            "verification_id": new_id("ver"),
+            "task_id": task_id,
+            "task_version": task.get("task_version", 1),
+            "artifact_digests": [state["artifacts"][a]["digest"]
+                                 for a in task.get("artifact_ids", [])
+                                 if a in state["artifacts"]],
+            "deterministic_checks": det_checks,
+            "rubric": rubric or {},
+            "decision": "accepted" if approved else "rejected",
+            "confidence": confidence,
+            "verifier": verifier,
+            "contribution_scores": [],
+            "issued_at": utcnow(),
+        }
+        receipt["signature"] = ("stub:" + hashlib.sha256(
+            (json.dumps(receipt, sort_keys=True)
+             + state.get("server_salt", "")).encode()).hexdigest()[:32])
+        task["verification_receipt"] = receipt
+        task["verified_at"] = utcnow()
+
+        st = state["agent_stats"].setdefault(worker_id or "unknown",
+                                             blank_agent_stats())
+        latency = max(0.0, (task.get("completed_at") or utcnow())
+                      - (task.get("claimed_at") or utcnow()))
+
+        if approved:
+            task["status"] = "done"
+            paid_total = approved_credits if approved_credits is not None else escrow
+            paid_total = max(0, min(paid_total, escrow))
+            # Legacy v0.1 verifications pay the worker the full approved
+            # amount (no review pool); the 90/10 split is v0.2-only.
+            review_pct = 0.0 if legacy else float(
+                goal.get("review_pool_pct", 0.10) or 0.0)
+            work_pool = round(paid_total * (1 - review_pct), 2)
+            review_pool = round(paid_total - work_pool, 2)
+            leftover = round(escrow - paid_total, 2)
+
+            shares = marginal_shares(task, artifact_scores or {})
+            receipt["contribution_scores"] = shares
+            payouts = {}
+            for s in shares:
+                amt = round(work_pool * s["marginal"], 2)
+                ag = state["agents"].get(s["agent_id"])
+                if ag:
+                    ag["credits"] = ag.get("credits", 0) + amt
+                payouts[s["agent_id"]] = amt
+            # review/integration pool: only to an eligible independent reviewer
+            reviewer_paid = 0.0
+            if (review_pool > 0 and verifier_agent_id
+                    and verifier_agent_id != worker_id
+                    and verifier_agent_id in state["agents"]):
+                ra = state["agents"][verifier_agent_id]
+                ra["credits"] = ra.get("credits", 0) + review_pool
+                rst = state["agent_stats"].setdefault(verifier_agent_id,
+                                                      blank_agent_stats())
+                rst["review_credits_earned"] += review_pool
+                reviewer_paid = review_pool
+            else:
+                leftover = round(leftover + review_pool, 2)
+
+            goal["budget_available"] = round(
+                goal.get("budget_available", 0) + leftover, 2)
+            goal["budget_spent"] = round(
+                goal.get("budget_spent", 0) + paid_total, 2)
+            st["verified"] += 1
+            st["credits_earned"] = round(
+                st["credits_earned"] + sum(payouts.values()), 2)
+
+            settlement = {
+                "settlement_id": new_id("settle"),
+                "task_id": task_id, "escrow": escrow,
+                "approved_total": paid_total, "work_pool": work_pool,
+                "review_pool": review_pool, "reviewer_paid": reviewer_paid,
+                "leftover_to_budget": leftover, "payouts": payouts,
+                "shares": shares,
+                "rationale": ("marginal-contribution split of the work pool; "
+                              "review pool to independent verifier or budget"),
+                "issued_at": utcnow(),
+            }
+            task["settlement_receipt"] = settlement
+            ledger_append("credits_settled", settlement, actor="orchestrator",
+                          goal_id=task["goal_id"], task_id=task_id,
+                          idempotency_key=idempotency_key)
+            outcome, q = "verified", quality
+        else:
+            task["status"] = "open"
+            task["agent_id"] = None
+            task["result"] = None
+            task["rejections"] = task.get("rejections", 0) + 1
+            goal["budget_available"] = round(
+                goal.get("budget_available", 0) + escrow, 2)
+            st["rejected"] += 1
+            outcome, q = "rejected", quality
+
+        task["escrow"] = 0
+        task["claim_expires"] = 0
+        task["lease"] = {"holder": None, "expires": 0, "last_progress_at": 0}
+        task["task_version"] = task.get("task_version", 1) + 1
+
+        # observed profile: claims stay Playgrounds-owned history
+        if worker_id and worker_id in state["agents"]:
+            obs = state["agents"][worker_id].setdefault("observed", {})
+            obs["tasks"] = obs.get("tasks", 0) + 1
+            obs["latency_sum"] = obs.get("latency_sum", 0.0) + latency
+            obs["cost_sum"] = obs.get("cost_sum", 0.0) + (paid_total if approved else 0)
+            if approved:
+                obs["verified"] = obs.get("verified", 0) + 1
+                obs["quality_sum"] = obs.get("quality_sum", 0.0) + quality
+
+        log_routing_outcome(task, worker_id, outcome, q, confidence,
+                            latency, paid_total if approved else 0)
+        ledger_append("verification_issued",
+                      {"verification_id": receipt["verification_id"],
+                       "decision": receipt["decision"],
+                       "confidence": confidence,
+                       "checks": [(c["id"], c["result"]) for c in det_checks]},
+                      actor=verifier["id"], goal_id=task["goal_id"],
+                      task_id=task_id, idempotency_key=idempotency_key,
+                      prior_version=receipt["task_version"])
+        save_state()
+
+    # deadbanded reputation lives outside the lock (takes it itself).
+    # quality always describes the assessed work quality; a rejection with
+    # low quality is a negative signal, not an inverted one.
+    if worker_id:
+        update_reputation(worker_id,
+                          task.get("required_capabilities") or ["general"],
+                          quality, confidence)
+    emit("task_verified", {"task_id": task_id, "approved": approved,
+                           "status": task["status"],
+                           "paid": paid_total if approved else 0,
+                           "verification_id": receipt["verification_id"]})
+    result = {"task": task, "verification_receipt": receipt,
+              "settlement_receipt": task.get("settlement_receipt")}
+    record_idempotency(idempotency_key, result)
+    return result
+
+# --------------------------------- heuristic delegation (cold-start) ------
+# v0.1 logic preserved verbatim: this is the cold-start prior. The learned
+# router (shadow mode) trains against its outcomes; static tiers never become
+# reputation or routing evidence on their own.
+
+def suggest_agents(task):
+    """Rank agents for a task the way a thoughtful human delegator would:
+    skill fit first, then whether the agent's model is right-sized for the
+    task's effort, then track record, availability, and cost."""
+    req = task.get("required_capabilities", []) or []
+    effort = clamp_effort(task.get("effort", 3))
+    suggestions = []
+    for a in state["agents"].values():
+        caps = a.get("capabilities", []) or []
+        cap_match = (len(set(req) & set(caps)) / len(req)) if req else 1.0
+
+        tier = a.get("model_tier", 3)
+        gap = tier - effort
+        if gap >= 0:
+            model_fit = max(0.3, 1.0 - 0.15 * gap)
+            model_note = ("model is stronger than this task needs"
+                          if gap >= 2 else "model fits this task well")
+        else:
+            model_fit = max(0.1, 1.0 - 0.35 * (-gap))
+            model_note = "model may be underpowered for this effort level"
+
+        st = state["agent_stats"].get(a["id"], {})
+        v, r = st.get("verified", 0), st.get("rejected", 0)
+        reliability = (v + 1) / (v + r + 2)
+        track_note = (f"{v} verified, {r} rejected" if (v + r)
+                      else "new agent — no track record yet")
+
+        available = a.get("status") == "idle"
+        avail_score = 1.0 if available else 0.2
+
+        cost_factor = 1.0 / (1.0 + 0.1 * (tier - 1))
+        base = (0.35 * cap_match + 0.25 * model_fit
+                + 0.25 * reliability + 0.15 * avail_score)
+        score = round(base * cost_factor * 100, 1)
+
+        reasons = [
+            f"capability match {int(cap_match * 100)}%"
+            + ("" if req else " (task lists no required capabilities)"),
+            f"model '{a.get('model', 'unknown')}' (tier {tier}) vs effort {effort}: {model_note}",
+            f"track record: {track_note}",
+            "idle and available now" if available else "currently busy on another task",
+        ]
+        suggestions.append({"agent_id": a["id"], "name": a.get("name"),
+                            "score": score, "reasons": reasons,
+                            "breakdown": {"capability": round(cap_match, 2),
+                                          "model_fit": round(model_fit, 2),
+                                          "reliability": round(reliability, 2),
+                                          "availability": avail_score,
+                                          "cost_factor": round(cost_factor, 2)}})
+    suggestions.sort(key=lambda s: -s["score"])
+    return suggestions
+
+
+def latest_topology_decision(task_id):
+    cands = [d for d in state["decisions"].values()
+             if d.get("kind") == "topology" and d.get("task_id") == task_id]
+    return max(cands, key=lambda d: d["ts"]) if cands else None
+
+
+def create_task(goal_id, body, actor="human"):
+    """Shared task-creation command used by REST and A2A. Returns
+    (task_dict, error_dict)."""
+    with lock:
+        if goal_id not in state["goals"]:
+            return None, {"error": "unknown goal", "code": 404}
+        tid = new_id("task")
+        plan_id = body.get("plan_id")
+        task = {
+            "id": tid, "goal_id": goal_id, "plan_id": plan_id,
+            "title": body.get("title", "Untitled task"),
+            "status": "open", "agent_id": None, "result": None,
+            "bounty": body.get("bounty", 10),
+            "required_capabilities": body.get("required_capabilities", []),
+            "effort": clamp_effort(body.get("effort", 3)),
+            "task_type": body.get("task_type", "general"),
+            "dependencies": body.get("dependencies", []),
+            "success_criteria": body.get("success_criteria", ""),
+            "risk": (body.get("risk") or "medium").lower(),
+            "decomposability": clamp01(body.get("decomposability", 0.3), 0.3),
+            "coupling": clamp01(body.get("coupling", 0.7), 0.7),
+            "input_contract": body.get("input_contract", {}),
+            "output_contract": body.get("output_contract", {}),
+            "topology": "solo", "task_version": 1,
+            "artifact_ids": [], "progress": [],
+            "lease": {"holder": None, "expires": 0, "last_progress_at": 0},
+            "stall_count": 0,
+            "verification_receipt": None, "settlement_receipt": None,
+            "escrow": 0, "rejections": 0,
+            "created_at": utcnow(), "claimed_at": None,
+            "claim_expires": 0, "completed_at": None, "verified_at": None,
+        }
+        state["tasks"][tid] = task
+        if plan_id and plan_id in state["plans"]:
+            state["plans"][plan_id]["task_ids"].append(tid)
+        ledger_append("task_created",
+                      {"title": task["title"], "bounty": task["bounty"],
+                       "task_version": 1},
+                      actor=actor, goal_id=goal_id, task_id=tid)
+        save_state()
+    emit("task_created", {"task": {k: task[k] for k in
+                                   ("id", "title", "status", "bounty")}})
+    orch = orchestrate_task(task)
+    with lock:
+        task = state["tasks"].get(tid, task)
+    task = dict(task)
+    task["orchestration"] = orch
+    return task, None
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "Playgrounds/0.2"
+
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, obj, ctype="application/json"):
+        body = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if not n:
+            return {}
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    # ---------- GET ----------
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        if parsed.path == "/":
+            with open(DASHBOARD_PATH, "rb") as f:
+                html = f.read()
+            self._send(200, html, "text/html; charset=utf-8")
+        elif parsed.path == "/.well-known/agent-card.json":
+            with lock:
+                self._send(200, playground_card())
+        elif len(parts) == 2 and parts[0] == "avatars" and parts[1] in (
+                "plush1.png", "plush2.png", "plush3.png", "plush4.png"):
+            fp = os.path.join(AVATAR_DIR, parts[1])
+            if not os.path.exists(fp):
+                return self._send(404, {"error": "avatar not found"})
+            with open(fp, "rb") as f:
+                self._send(200, f.read(), "image/png")
+        elif parsed.path == "/api/state":
+            with lock:
+                self._send(200, state)
+        elif parsed.path == "/api/policy":
+            with lock:
+                self._send(200, state["policy"])
+        elif parsed.path == "/api/ledger":
+            qs = parse_qs(parsed.query)
+            since = int(qs.get("since", [0])[0])
+            gid = qs.get("goal_id", [None])[0]
+            typ = qs.get("type", [None])[0]
+            with lock:
+                evs = [e for e in state["ledger"]
+                       if e["seq"] > since
+                       and (gid is None or e.get("goal_id") == gid)
+                       and (typ is None or e.get("type") == typ)]
+                self._send(200, {"events": evs[-500:], "digest": ledger_digest(),
+                                 "ledger_seq": state["ledger_seq"]})
+        elif parsed.path == "/api/events":
+            qs = parse_qs(parsed.query)
+            since = int(qs.get("since", [0])[0])
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            try:
+                with lock:
+                    for ev in state["events"]:
+                        if ev["seq"] > since:
+                            self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                    self.wfile.flush()
+                    subscribers.add(self.wfile)
+                while True:
+                    time.sleep(15)
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+            except Exception:
+                pass
+            finally:
+                with lock:
+                    subscribers.discard(self.wfile)
+        elif parsed.path == "/api/messages":
+            qs = parse_qs(parsed.query)
+            since = int(qs.get("since", [0])[0])
+            gid = qs.get("goal_id", [None])[0]
+            with lock:
+                msgs = [m for m in state["messages"]
+                        if m["seq"] > since and (gid is None or m.get("goal_id") == gid)]
+                self._send(200, {"messages": msgs[-100:]})
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                and parts[3] == "suggest":
+            tid = parts[2]
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    self._send(404, {"error": "unknown task"})
+                else:
+                    self._send(200, {"task_id": tid,
+                                     "suggestions": suggest_agents(task)})
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                and parts[3] == "route":
+            tid = parts[2]
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    self._send(404, {"error": "unknown task"})
+                else:
+                    self._send(200, {"task_id": tid,
+                                     "routing": learned_scores(task)})
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                and parts[3] == "topology":
+            tid = parts[2]
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    self._send(404, {"error": "unknown task"})
+                else:
+                    self._send(200, {"task_id": tid,
+                                     "topology": task.get("topology", "solo"),
+                                     "decision": latest_topology_decision(tid)})
+        elif len(parts) == 3 and parts[0] == "api" and parts[1] == "decisions":
+            did = parts[2]
+            with lock:
+                d = state["decisions"].get(did)
+                if not d:
+                    self._send(404, {"error": "unknown decision"})
+                else:
+                    self._send(200, d)
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                and parts[3] == "stats":
+            aid = parts[2]
+            with lock:
+                agent = state["agents"].get(aid)
+                if not agent:
+                    self._send(404, {"error": "unknown agent"})
+                else:
+                    st = state["agent_stats"].get(aid, blank_agent_stats())
+                    denom = st["verified"] + st["rejected"]
+                    success = (st["verified"] / denom) if denom else None
+                    avg = (st["work_seconds"] / st["completed"]) if st["completed"] else None
+                    self._send(200, {
+                        "agent": agent,
+                        "tasks_submitted": st["completed"],
+                        "tasks_verified": st["verified"],
+                        "tasks_rejected": st["rejected"],
+                        "success_rate": success,
+                        "avg_task_seconds": avg,
+                        "credits_earned": st["credits_earned"],
+                        "review_credits_earned": st.get("review_credits_earned", 0),
+                        "credits_balance": agent.get("credits", 0),
+                        "model": agent.get("model", "unknown"),
+                        "model_tier": agent.get("model_tier", 3),
+                    })
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                and parts[3] == "card":
+            aid = parts[2]
+            with lock:
+                agent = state["agents"].get(aid)
+                if not agent:
+                    self._send(404, {"error": "unknown agent"})
+                else:
+                    self._send(200, build_agent_card(agent))
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                and parts[3] == "reputation":
+            aid = parts[2]
+            with lock:
+                if aid not in state["agents"]:
+                    self._send(404, {"error": "unknown agent"})
+                else:
+                    self._send(200, {"agent_id": aid,
+                                     "reputation": reputation_view(aid)})
+        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
+                and parts[3] == "context":
+            gid = parts[2]
+            with lock:
+                ns = state["context"].get(gid, {})
+                self._send(200, {"goal_id": gid, "context": ns})
+        else:
+            self._send(404, {"error": "not found"})
+
+# ---------- POST ----------
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        body = self._body()
+
+        if parts == ["api", "agents", "register"]:
+            with lock:
+                if len(state["agents"]) >= MAX_AGENTS:
+                    return self._send(409, {"error": "playground is full",
+                                            "max_agents": MAX_AGENTS})
+                aid = new_id("agent")
+                slot = len(state["agents"])  # 0-based plush slot
+                agent = {
+                    "id": aid,
+                    "name": body.get("name", "Agent"),
+                    "avatar": body.get("avatar", "\U0001f916"),
+                    "color": body.get("color", "#7c6cf0"),
+                    "plush": f"plush{(slot % 4) + 1}.png",
+                    "capabilities": body.get("capabilities", []),
+                    "model": body.get("model", "unknown"),
+                    "model_tier": model_tier(body.get("model", "unknown")),
+                    "agent_card": {
+                        "description": body.get("description", ""),
+                        "version": body.get("card_version", "0.2.0"),
+                        "provider": body.get("provider", "unknown"),
+                        "skills": body.get("skills", []),
+                        "input_modalities": body.get("input_modalities", ["text"]),
+                        "output_modalities": body.get("output_modalities", ["text"]),
+                        "cost_per_task": body.get("cost_per_task"),
+                        "rate_limits": body.get("rate_limits", {}),
+                        "auth": body.get("auth", {}),
+                        "availability": body.get("availability", "idle"),
+                        "max_bounty": body.get("max_bounty"),
+                        "supportedInterfaces": body.get("supportedInterfaces", []),
+                    },
+                    "scopes": body.get("scopes", ["*"]),
+                    "tenant_id": body.get("tenant_id", "local"),
+                    "observed": {"tasks": 0, "verified": 0, "quality_sum": 0.0,
+                                 "latency_sum": 0.0, "cost_sum": 0.0},
+                    "credits": 0,
+                    "status": "idle",
+                    "current_task": None,
+                    "last_heartbeat": utcnow(),
+                }
+                state["agents"][aid] = agent
+                ledger_append("agent_registered",
+                              {"name": agent["name"], "plush": agent["plush"],
+                               "skills": [s.get("id") for s in
+                                          agent["agent_card"]["skills"]] or
+                              agent["capabilities"]},
+                              actor=aid)
+                save_state()
+            emit("agent_registered", {"agent": agent})
+            return self._send(200, {"id": aid, "agent": agent,
+                                    "card": build_agent_card(agent)})
+
+        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "heartbeat":
+            aid = parts[2]
+            sweep_expired_claims()
+            detect_stalls()
+            with lock:
+                agent = state["agents"].get(aid)
+                if not agent:
+                    return self._send(404, {"error": "unknown agent"})
+                agent["status"] = body.get("status", agent["status"])
+                if "current_task" in body:
+                    agent["current_task"] = body["current_task"]
+                agent["last_heartbeat"] = utcnow()
+                save_state()
+            emit("agent_heartbeat", {"agent_id": aid, "status": agent["status"],
+                                    "current_task": agent["current_task"]})
+            return self._send(200, {"ok": True})
+
+        if parts == ["api", "goals"]:
+            with lock:
+                gid = new_id("goal")
+                budget = body.get("budget", 1000)
+                goal = {"id": gid, "title": body.get("title", "Untitled goal"),
+                        "description": body.get("description", ""),
+                        "budget": budget, "budget_available": budget,
+                        "budget_spent": 0,
+                        "tenant_id": body.get("tenant_id", "local"),
+                        "review_pool_pct": float(body.get("review_pool_pct", 0.10)),
+                        "plan_ids": [],
+                        "created_at": utcnow()}
+                state["goals"][gid] = goal
+                ledger_append("goal_created", {"title": goal["title"],
+                                              "budget": budget},
+                              actor="human", goal_id=gid)
+                save_state()
+            emit("goal_created", {"goal": goal})
+            return self._send(200, goal)
+
+        if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "plans":
+            gid = parts[2]
+            plan = create_plan(gid, body.get("objective", ""),
+                               body.get("success_criteria", ""),
+                               body.get("topology_policy", "solo_first"))
+            if not plan:
+                return self._send(404, {"error": "unknown goal"})
+            return self._send(200, plan)
+
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "plans" \
+                and parts[3] == "replan":
+            pid = parts[2]
+            plan = replan(pid, body.get("reason", "manual replan"),
+                          body.get("changes"))
+            if not plan:
+                return self._send(404, {"error": "unknown plan"})
+            return self._send(200, plan)
+
+        if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "tasks":
+            gid = parts[2]
+            task, err = create_task(gid, body)
+            if err:
+                return self._send(err.get("code", 400), err)
+            return self._send(200, task)
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "clarify":
+            tid = parts[2]
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    return self._send(404, {"error": "unknown task"})
+                if task["status"] != "needs_input":
+                    return self._send(409, {"error": "task is not awaiting clarification"})
+                if body.get("success_criteria"):
+                    task["success_criteria"] = body["success_criteria"]
+                if body.get("input_contract"):
+                    task["input_contract"] = body["input_contract"]
+                task["status"] = "open"
+                task["task_version"] += 1
+                ledger_append("clarification_provided",
+                              {"success_criteria": task["success_criteria"]},
+                              actor=body.get("by", "human"),
+                              goal_id=task["goal_id"], task_id=tid,
+                              prior_version=task["task_version"] - 1)
+                save_state()
+            emit("task_open", {"task_id": tid})
+            decision = select_topology(state["tasks"][tid])
+            with lock:
+                t = state["tasks"][tid]
+                t["topology"] = decision["output"]["topology"]
+                save_state()
+                out = dict(t)
+            out["orchestration"] = decision
+            return self._send(200, out)
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "claim":
+            tid = parts[2]
+            key = body.get("idempotency_key")
+            dup = check_idempotency(key)
+            if dup:
+                return self._send(200, dup)
+            sweep_expired_claims()
+            with lock:
+                task = state["tasks"].get(tid)
+                aid = body.get("agent_id")
+                if not task:
+                    return self._send(404, {"error": "unknown task"})
+                if aid not in state["agents"]:
+                    return self._send(404, {"error": "unknown agent"})
+                if task["status"] != "open":
+                    return self._send(409, {"error": f"task is {task['status']}"})
+                goal = state["goals"].get(task["goal_id"], {})
+                bounty = task.get("bounty", 10)
+                if bounty > goal.get("budget_available", 0):
+                    return self._send(409, {"error": "insufficient goal budget for bounty"})
+                goal["budget_available"] = round(goal.get("budget_available", 0) - bounty, 2)
+                task["escrow"] = bounty
+                task["status"] = "claimed"
+                task["agent_id"] = aid
+                task["claimed_at"] = utcnow()
+                task["claim_expires"] = utcnow() + CLAIM_WINDOW
+                task["lease"] = {"holder": aid, "expires": task["claim_expires"],
+                                 "last_progress_at": utcnow()}
+                task["task_version"] += 1
+                ledger_append("task_leased",
+                              {"agent_id": aid, "bounty": bounty, "escrow": bounty,
+                               "lease_expires": task["claim_expires"]},
+                              actor=aid, goal_id=task["goal_id"], task_id=tid,
+                              idempotency_key=key,
+                              prior_version=task["task_version"] - 1)
+                save_state()
+                out = dict(task)
+            emit("task_claimed", {"task_id": tid, "agent_id": aid,
+                                  "bounty": bounty, "escrow": bounty})
+            record_idempotency(key, {"task": out})
+            return self._send(200, {"task": out})
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "progress":
+            tid = parts[2]
+            key = body.get("idempotency_key")
+            dup = check_idempotency(key)
+            if dup:
+                return self._send(200, dup)
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    return self._send(404, {"error": "unknown task"})
+                if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
+                    return self._send(409, {"error": "task not claimed by this agent"})
+                cp = {"at": utcnow(), "note": body.get("note", ""),
+                      "progress_pct": clamp01(body.get("progress_pct", 0.0), 0.0)}
+                task["progress"].append(cp)
+                task["progress"] = task["progress"][-50:]
+                task["lease"]["last_progress_at"] = utcnow()
+                task["lease"]["expires"] = utcnow() + CLAIM_WINDOW  # progress renews lease
+                task["claim_expires"] = task["lease"]["expires"]
+                ledger_append("progress_recorded", cp, actor=body.get("agent_id"),
+                              goal_id=task["goal_id"], task_id=tid,
+                              idempotency_key=key)
+                save_state()
+                out = {"task_id": tid, "checkpoint": cp,
+                       "checkpoints": len(task["progress"])}
+            emit("progress_recorded", {"task_id": tid, "checkpoint": cp})
+            record_idempotency(key, out)
+            return self._send(200, out)
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "artifacts":
+            tid = parts[2]
+            res = publish_artifact(tid, body.get("agent_id"), body.get("kind"),
+                                   body.get("name"), body.get("content"),
+                                   body.get("media_type"),
+                                   body.get("idempotency_key"))
+            if res.get("error"):
+                return self._send(404, res)
+            return self._send(200, res)
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "complete":
+            tid = parts[2]
+            key = body.get("idempotency_key")
+            dup = check_idempotency(key)
+            if dup:
+                return self._send(200, dup)
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    return self._send(404, {"error": "unknown task"})
+                if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
+                    return self._send(409, {"error": "task not claimed by this agent"})
+                task["status"] = "pending_verification"
+                task["result"] = body.get("result", "")
+                task["completed_at"] = utcnow()
+                task["task_version"] += 1
+                _st = state["agent_stats"].setdefault(body.get("agent_id"),
+                                                     blank_agent_stats())
+                _st["completed"] += 1
+                if task.get("claimed_at"):
+                    _st["work_seconds"] += max(0.0, task["completed_at"] - task["claimed_at"])
+                ledger_append("task_submitted",
+                              {"result_chars": len(task["result"] or "")},
+                              actor=body.get("agent_id"), goal_id=task["goal_id"],
+                              task_id=tid, idempotency_key=key,
+                              prior_version=task["task_version"] - 1)
+                save_state()
+                out = dict(task)
+            emit("task_completed", {"task_id": tid, "agent_id": task["agent_id"],
+                                    "result": task["result"]})
+            record_idempotency(key, {"task": out})
+            return self._send(200, {"task": out})
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "verify":
+            tid = parts[2]
+            res = verify_task(
+                tid, body.get("approved"),
+                approved_credits=body.get("approved_credits"),
+                verifier_agent_id=body.get("verifier_agent_id"),
+                quality=body.get("quality", 0.5),
+                confidence=body.get("confidence", 0.5),
+                rubric=body.get("rubric"),
+                checks=body.get("checks"),
+                artifact_scores=body.get("artifact_scores"),
+                idempotency_key=body.get("idempotency_key"))
+            if res.get("error"):
+                return self._send(res.get("code", 400), res)
+            return self._send(200, res)
+
+        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "cancel":
+            tid = parts[2]
+            t = cancel_task(tid, by=body.get("by", "human"),
+                            reason=body.get("reason", "cancelled"))
+            if not t:
+                return self._send(404, {"error": "unknown or terminal task"})
+            return self._send(200, {"task": t})
+
+        if parts == ["api", "messages"]:
+            frm = body.get("from_agent")
+            to = body.get("to_agent")
+            text = body.get("text", "")
+            if not text:
+                return self._send(400, {"error": "text required"})
+            with lock:
+                if frm not in state["agents"]:
+                    return self._send(404, {"error": "unknown from_agent"})
+                if to and to not in state["agents"]:
+                    return self._send(404, {"error": "unknown to_agent"})
+                state["msg_seq"] += 1
+                msg = {"seq": state["msg_seq"], "id": new_id("msg"),
+                       "from_agent": frm, "to_agent": to,
+                       "goal_id": body.get("goal_id"), "text": text,
+                       "at": utcnow()}
+                state["messages"].append(msg)
+                state["messages"] = state["messages"][-500:]
+                save_state()
+            emit("message_sent", {"message": msg})
+            return self._send(200, msg)
+
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
+                and parts[3] == "context":
+            gid = parts[2]
+            key = body.get("key")
+            if not key:
+                return self._send(400, {"error": "key required"})
+            with lock:
+                ns = state["context"].setdefault(gid, {})
+                entry = ns.get(key)
+                if not entry or entry.get("kind") != "value":
+                    entry = {"kind": "value", "history": []}
+                entry["value"] = body.get("value")
+                entry["updated_by"] = body.get("agent_id")
+                entry["updated_at"] = utcnow()
+                entry["history"].append({"value": body.get("value"),
+                                        "by": body.get("agent_id"),
+                                        "at": utcnow()})
+                entry["history"] = entry["history"][-20:]
+                ns[key] = entry
+                save_state()
+            emit("context_updated", {"goal_id": gid, "key": key, "kind": "value",
+                                    "by": body.get("agent_id")})
+            return self._send(200, {"ok": True, "entry": entry})
+
+        if len(parts) == 5 and parts[0] == "api" and parts[1] == "goals" \
+                and parts[3] == "context" and parts[4] == "append":
+            gid = parts[2]
+            key = body.get("key")
+            if not key:
+                return self._send(400, {"error": "key required"})
+            with lock:
+                ns = state["context"].setdefault(gid, {})
+                entry = ns.get(key)
+                if not entry or entry.get("kind") != "log":
+                    entry = {"kind": "log", "log": []}
+                entry["log"].append({"entry": body.get("entry"),
+                                     "by": body.get("agent_id"),
+                                     "at": utcnow()})
+                entry["log"] = entry["log"][-100:]
+                ns[key] = entry
+                save_state()
+            emit("context_updated", {"goal_id": gid, "key": key, "kind": "log",
+                                    "by": body.get("agent_id")})
+            return self._send(200, {"ok": True, "entry": entry})
+
+        if parts == ["a2a"]:
+            return self._handle_a2a(body)
+
+        self._send(404, {"error": "not found"})
+
+    # ---------- A2A (minimal JSON-RPC slice) ----------
+    def _handle_a2a(self, body):
+        mid = body.get("id")
+        method = body.get("method", "")
+        params = body.get("params", {}) or {}
+
+        def ok(result):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "result": result})
+
+        def err(code, message):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "error": {"code": code, "message": message}})
+
+        if method == "card/get":
+            with lock:
+                return ok(playground_card())
+        if method == "task/send":
+            gid = params.get("goal_id")
+            if not gid:
+                return err(-32602, "goal_id required")
+            task, e = create_task(gid, params, actor="a2a")
+            if e:
+                return err(-32000, e["error"])
+            return ok({"task_id": task["id"], "status": task["status"],
+                       "topology": task.get("topology")})
+        if method == "task/get":
+            tid = params.get("task_id")
+            with lock:
+                task = state["tasks"].get(tid)
+                if not task:
+                    return err(-32000, "unknown task")
+                arts = [state["artifacts"][a] for a in task.get("artifact_ids", [])
+                        if a in state["artifacts"]]
+            return ok({"task": task, "artifacts": arts})
+        if method == "task/cancel":
+            t = cancel_task(params.get("task_id"), by="a2a",
+                            reason=params.get("reason", "a2a cancel"))
+            if not t:
+                return err(-32000, "unknown or terminal task")
+            return ok({"task_id": t["id"], "status": t["status"]})
+        return err(-32601, f"method not found: {method}")
+
+
+if __name__ == "__main__":
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    print(f"Playgrounds protocol server v0.2 on http://127.0.0.1:{PORT}", flush=True)
+    server.serve_forever()

@@ -1,0 +1,31 @@
+OK: required commands found
+OK: input files found
+OK: prepared validation output directory: /home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate
+size=478533 bytes
+Pages:           19
+Page size:       594.96 x 841.92 pts (A4)
+OK: PDF integrity and metadata look valid
+imgs=0 data-uri-srcs=0
+css-urls=0 css-data-uris=0
+OK: HTML image references are embedded
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-01.png 151342 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-02.png 309645 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-03.png 276951 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-04.png 216774 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-05.png 213909 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-06.png 262242 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-07.png 270720 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-08.png 260972 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-09.png 259104 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-10.png 302616 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-11.png 227027 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-12.png 272320 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-13.png 322550 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-14.png 272343 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-15.png 228688 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-16.png 240473 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-17.png 319357 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-18.png 356667 bytes
+/home/hatch/workspace/goals/playgrounds/files/playgrounds-v02-build-plan/.src/validate/page-19.png 295799 bytes
+OK: rendered 19 validation PNG(s) from the PDF
+PASS: mechanical PDF validation complete; inspect rendered PNGs before returning the artifact.
