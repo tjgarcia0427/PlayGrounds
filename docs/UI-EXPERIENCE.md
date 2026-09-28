@@ -60,9 +60,12 @@ the backend isolation vulnerabilities.
 - Private data is cleared on failed refresh rather than silently retaining a
   previous authenticated snapshot.
 
-Public operator-login integration is separate from this local room UI. The
-unsafe query-token propagation proposed by #23 must not replace the in-memory
-transport. No remote deployment is performed here.
+Operator access has its own masked, memory-only key entry; it is used only for
+lobby/directory/create requests, never for room requests. Members may join or
+reconnect directly by room ID without enumerating the gated directory. The
+backend must serve the non-sensitive login shell without operator auth. The
+unsafe query-token propagation proposed by #23 must not replace this transport.
+No remote deployment is performed here.
 
 ## Validation
 
