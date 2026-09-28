@@ -194,7 +194,7 @@ function buildCampus() {
   mode.addEventListener('change',setView);
   document.getElementById('cameraLeft').addEventListener('click',()=>{orbit-=.16});
   document.getElementById('cameraRight').addEventListener('click',()=>{orbit+=.16});
-  document.getElementById('cameraHome').addEventListener('click',()=>{orbit=.64;zoom=1;focus=0});
+  document.getElementById('cameraHome').addEventListener('click',()=>{orbit=.64;zoom=1;focus=0;document.getElementById('cameraZoom').value='1'});
   document.getElementById('cameraZoom').addEventListener('input',e=>{zoom=Number(e.target.value)});
   addEventListener('playgrounds-world',e=>sync(e.detail.world));
   addEventListener('playgrounds-focus',e=>{focus=e.detail==='classroom'?5:-5});

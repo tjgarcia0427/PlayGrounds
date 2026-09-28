@@ -48,6 +48,7 @@ try {
   await page.emulateMedia({reducedMotion:'reduce'});
   await page.click('#quietMotion');
   await page.click('#cameraHome');
+  assert.equal(await page.locator('#cameraZoom').inputValue(),'1');
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.reducedMotion==='true');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'classroom-desktop.png')});
   await page.setViewportSize({width:390,height:844});
