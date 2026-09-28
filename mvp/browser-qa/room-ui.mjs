@@ -52,7 +52,7 @@ try {
   assert.equal(await page.locator('#newRoomKey').count(),0);
   await page.screenshot({path:join(output,'ui-room-desktop.png'),fullPage:true});
   await page.getByRole('button',{name:'Invite companions',exact:true}).click();
-  await page.getByRole('button',{name:'＋ Create invitation',exact:true}).click();
+  await page.getByRole('button',{name:'+ Create invitation',exact:true}).click();
   await page.fill('#inviteLabel','Garden study group');await page.selectOption('#inviteTTL','3600');await page.click('#dialogSubmit');
   await page.waitForSelector('#inviteSecret');assert.equal(await page.inputValue('#inviteSecret'),'QA_invite_secret');
   assert.match(await page.textContent('#inviteReachability'),/Localhost only/);
@@ -65,6 +65,7 @@ try {
   await page.click('#dialogCancel');await page.getByRole('button',{name:'Invite companions',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('inviteList').textContent.includes('Expired'));
   assert.match(await page.textContent('#inviteList'),/Used/);
+  await page.locator('#dialogTitle').evaluate(e=>{const p=document.createElement('p');p.textContent='Synthetic UI fixture — not a live invitation';e.after(p)});
   await page.screenshot({path:join(output,'ui-invites-desktop.png')});await page.click('#dialogCancel');
   await page.selectOption('#roomSelect','room_beta');await page.fill('#roomKey','bad');await page.click('#dialogSubmit');
   assert.match(await page.textContent('#dialogError'),/could not connect/);
@@ -90,7 +91,7 @@ try {
   await page.screenshot({path:join(output,'ui-mobile.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no mobile overflow');
   if(!await page.locator('#roomTools').evaluate(e=>e.open))await page.locator('#roomTools summary').click();
-  await page.click('#createRoom');await page.screenshot({path:join(output,'ui-create-mobile.png')});
+  await page.click('#createRoom');await page.locator('#dialogTitle').evaluate(e=>{const p=document.createElement('p');p.textContent='Synthetic UI fixture — not a live room';e.after(p)});await page.screenshot({path:join(output,'ui-create-mobile.png')});
   await page.keyboard.press('Escape');
   await page.reload({waitUntil:'domcontentloaded'});await page.selectOption('#roomSelect','room_alpha');
   assert.equal(await page.locator('#roomKey').isVisible(),true,'refresh forgets credentials');

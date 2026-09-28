@@ -9,7 +9,7 @@
     const scope=ui.scope(),room=ui.current;
     const box=ui.fields('<p>Single-use invitations make space for one new companion. Only you, the owner, can create or revoke them.</p><div id="inviteList" aria-live="polite">Loading invitations…</div>');
     ui.openDialog('Invite good company',box,null);
-    box.prepend(button('＋ Create invitation',()=>mintInvite(scope),'primary'));
+    box.prepend(button('+ Create invitation',()=>mintInvite(scope),'primary'));
     try {
       const result=await ui.request('/api/invites',{},scope);
       if(!ui.isCurrent(scope)||!$('inviteList'))return;
