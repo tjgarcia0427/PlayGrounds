@@ -804,6 +804,8 @@ def publish_artifact(task_id, agent_id, kind, name, content, media_type,
             return {"error": "unknown agent"}
         if state["tasks"][task_id]["status"] != "claimed":
             return {"error": "artifacts require an active claimed task", "code": 409}
+        if agent_id != state["tasks"][task_id].get("agent_id"):
+            return {"error": "only the claim holder may publish artifacts", "code": 403}
         aid = new_id("artifact")
         art = {"id": aid, "task_id": task_id, "agent_id": agent_id,
                "kind": kind or "result", "name": name or "artifact",
