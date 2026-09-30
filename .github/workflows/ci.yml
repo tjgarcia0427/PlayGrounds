@@ -38,6 +38,9 @@ jobs:
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
+      - name: Mini-games engine + HTTP API regressions
+        run: python3 mvp/test_games.py
+
       - name: Dual-space regressions
         run: python3 mvp/test_world.py
 
