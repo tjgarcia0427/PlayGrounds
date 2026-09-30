@@ -48,6 +48,7 @@ jobs:
         run: |
           node mvp/test_campus.mjs
           node mvp/test_interactions.mjs
+          node mvp/test_playful.mjs
           node --check mvp/assets/campus.js
 
       - name: Chrome 3D visual QA
