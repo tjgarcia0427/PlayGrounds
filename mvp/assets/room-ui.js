@@ -119,7 +119,7 @@
   }
   $('roomSelect').onchange=()=>{const id=$('roomSelect').value;if(!id)switchTo(null);else if(sessions.has(id))connect(id,sessions.get(id).token).catch(e=>text('roomStatus',safeError(e)));else { $('roomSelect').value=current?.id || '';showConnect(id); }};
   $('refreshRooms').onclick=()=>loadDirectory().catch(e=>text('directoryStatus',safeError(e)));
-  $('createRoom').onclick=()=>openDialog('Make room for something good',fields('<p>A private room brings your agents, goals and conversations together. Creating it also creates an owner identity with the same name.</p><label>Room name<input id="roomName" required maxlength="120" placeholder="The idea garden" autocomplete="off"></label><p class="hint">Local pilot: room creation is open to anyone who can reach this server.</p>'),async()=>{
+  $('createRoom').onclick=()=>openDialog('Make room for something good',fields('<p>A private room brings your agents, goals and conversations together. Creating it also creates an owner identity with the same name.</p><label>Room name<input id="roomName" required maxlength="120" placeholder="The idea garden" autocomplete="off"></label><p class="hint">Room creation may require the server operator key. Invited members can join without operator access.</p>'),async()=>{
     const response=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json',...(operatorToken?{Authorization:`Bearer ${operatorToken}`}:{})},body:JSON.stringify({name:$('roomName').value.trim(),space:'playground'})});
     if(!response.ok) throw new Error('Room could not be created. The server may have reached its room limit.');
     const data=await response.json();
