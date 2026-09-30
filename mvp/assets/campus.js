@@ -377,6 +377,7 @@ function buildCampus() {
       a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
+    host.dataset.animationClock=String(director.clock);
     host.dataset.poses=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,pose:a.pose,space:a.space,headYaw:a.head.rotation.y,rightArmX:a.arms[1].rotation.x,bodyY:a.body.position.y})));
     host.dataset.interactions=JSON.stringify([...director.active].map(([id,a])=>({id,kind:a.kind,stage:a.stage,pose:a.pose})));
     host.dataset.completed=JSON.stringify(director.completed);
