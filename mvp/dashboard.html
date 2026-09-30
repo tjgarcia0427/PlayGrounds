@@ -169,9 +169,9 @@ function pillFor(a, s) {
   if (cls === 'st-blocked') return '<span class="pill blocked">blocked</span>';
   return '<span class="pill idle">idle</span>';
 }
-let refreshing = false;
+let refreshing = false, refreshAgain = false;
 async function refresh() {
-  if (refreshing) return;
+  if (refreshing) { refreshAgain=true; return; }
   refreshing = true;
   try {
   const r = await fetch('/api/state'); if (!r.ok) throw new Error('HTTP ' + r.status); const s = await r.json();
@@ -249,7 +249,7 @@ async function refresh() {
   }
   document.getElementById('msgs').innerHTML = msgHtml;
   } catch(e) { globalThis.dispatchEvent(new Event('playgrounds-workboard-clear')); document.getElementById('connection').textContent = 'DISCONNECTED — ' + e.message; }
-  finally { refreshing = false; }
+  finally { refreshing = false; if(refreshAgain){refreshAgain=false;queueMicrotask(refresh);} }
 }
 async function verify(tid, approved) {
   const verifier_agent_id = document.getElementById('reviewer-' + tid).value;

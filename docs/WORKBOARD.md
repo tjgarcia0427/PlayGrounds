@@ -29,6 +29,9 @@ Preserve these additions when merging main: `#workboard` inside classroomPanels,
 stylesheet and module tags, three exact static allowlist routes. No arbitrary
 filesystem static route is added. The existing authorized renderWorld(world,state)
 event drives the board without independent API requests or a second credential path.
+Main now queues a follow-up refresh if SSE arrives during an in-flight refresh;
+otherwise a rapid completion could be missed until polling. Preserve UI27’s
+equivalent refreshAgain guard when merging.
 
 Room switch/removal already dispatches an empty world/state from UI27; this clears
 cards. Also dispatch `playgrounds-workboard-clear` on terminal refresh/auth failure,
