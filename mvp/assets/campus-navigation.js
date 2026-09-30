@@ -1,15 +1,20 @@
 import {BufferGeometry,Float32BufferAttribute,Vector3} from './vendor/three.module.js';
 import {Pathfinding} from './vendor/three-pathfinding.module.js';
-import {spot,RENDER_LIMIT} from './campus-layout.js';
+import {spot,RENDER_LIMIT,CAMPUS,ANNEX_PROPS} from './campus-layout.js';
 
 // Scene dimensions are shared with rendering; all desks reserve space even when hidden.
 export const DESK={width:1.4,depth:.5,offset:-.72};
 export const COFFEE={x:6.8,z:6.05};
 export const CAROUSEL_ENTRY={x:-6.4,z:-.45};
+export const SLIDE_ENTRY={x:-10.5,z:-5.5},SLIDE_EXIT={x:-10.5,z:.05};
+export const MONKEY_ENTRY={x:-2.9,z:-5.5},MONKEY_EXIT={x:-2.9,z:-1.1};
 export const RADIUS=.34;
 export function obstacles() {
   const boxes=[];
-  const add=(x,z,w,d)=>boxes.push({minX:x-w/2-RADIUS,maxX:x+w/2+RADIUS,minZ:z-d/2-RADIUS,maxZ:z+d/2+RADIUS});
+  // three-pathfinding rounds zone vertices to hundredths. Round clearance
+  // boxes outward first so a rounded corner cannot cut through furniture.
+  const lower=n=>Math.floor(n*100)/100,upper=n=>Math.ceil(n*100)/100;
+  const add=(x,z,w,d)=>boxes.push({minX:lower(x-w/2-RADIUS),maxX:upper(x+w/2+RADIUS),minZ:lower(z-d/2-RADIUS),maxZ:upper(z+d/2+RADIUS)});
   for(let i=0;i<RENDER_LIMIT;i++){const p=spot('classroom',i);add(p.x,p.z+DESK.offset,DESK.width,DESK.depth)}
   add(5.6,-4.75,3.4,1.15);add(8.9,-4.65,1.6,1.6);
   add(1.1,-5.2,1.25,.65);add(11.8,-5.2,.9,.9);
@@ -18,15 +23,18 @@ export function obstacles() {
   add(-11,3.4,2.1,2.1);add(-10.5,-2.8,1.5,4.3);
   add(-6.4,-2.8,3.2,3.2);add(-2.9,-3.4,1.6,3);
   add(-12,-5.7,1,1);add(-7,-6.6,1,1);add(-2,-6,1,1);
+  for(const p of ANNEX_PROPS)add(p.x,p.z,p.w,p.d);
+  for(const x of [-16.5,-12,-8,-4,4,8,12,16.5])add(x,10.3,.17,.17);
   // All crossing uses the gate, not the imaginary room-divider wall.
   boxes.push({minX:-.35,maxX:.35,minZ:-6.2,maxZ:5.25});
+  boxes.push({minX:-.35,maxX:.35,minZ:6.65,maxZ:CAMPUS.maxZ+1});
   return boxes;
 }
 export function blocked(p,boxes=obstacles()) {
   return boxes.some(b=>p.x>b.minX+1e-5&&p.x<b.maxX-1e-5&&p.z>b.minZ+1e-5&&p.z<b.maxZ-1e-5);
 }
 export function createNavigator() {
-  const boxes=obstacles(),bounds={minX:-12.6,maxX:12.4,minZ:-6.15,maxZ:6.25};
+  const boxes=obstacles(),bounds=CAMPUS;
   // Rectilinear navmesh derived from furniture bounds, not an approximate sparse waypoint list.
   const axis=(lo,hi,a,b)=>[...new Set([lo,hi,...boxes.flatMap(o=>[Math.max(lo,Math.min(hi,o[a])),Math.max(lo,Math.min(hi,o[b]))])])].sort((a,b)=>a-b);
   const xs=axis(bounds.minX,bounds.maxX,'minX','maxX'),zs=axis(bounds.minZ,bounds.maxZ,'minZ','maxZ'),vertices=[];

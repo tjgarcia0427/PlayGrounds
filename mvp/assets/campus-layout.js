@@ -1,5 +1,16 @@
 // Pure deterministic layout: render state never changes protocol state.
 export const RENDER_LIMIT = 24;
+// Keep characters/equipment at human-toy scale; enlarge the actual floor instead.
+export const CAMPUS = Object.freeze({roomCenter:8.8, width:17.4, depth:20, centerZ:1,
+  minX:-17.1,maxX:16.5,minZ:-6.15,maxZ:10.45});
+export const ANNEX_PROPS = Object.freeze([
+  {kind:'planter',space:'playground',x:-15.4,z:-4.8,w:2,d:1.6},
+  {kind:'bench',space:'playground',x:-15.5,z:1.6,w:1.2,d:3.2},
+  {kind:'planter',space:'playground',x:-15.4,z:7.8,w:2,d:1.6},
+  {kind:'sofa',space:'classroom',x:15.5,z:-2.4,w:1.5,d:3.4},
+  {kind:'table',space:'classroom',x:14.9,z:1.1,w:1.5,d:1.5},
+  {kind:'planter',space:'classroom',x:15.6,z:4.3,w:1.4,d:1.4},
+]);
 export function hashId(id) {
   let h = 2166136261;
   for (const c of id) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
