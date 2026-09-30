@@ -41,6 +41,18 @@ try {
   assert.equal(await page.locator('#worldStage').isVisible(),false);
   // Explicit fixture caption is included in each screenshot.
   await page.evaluate(()=>{const b=document.createElement('p');b.textContent='VISUAL QA FIXTURE — synthetic test agents, not live participants';b.style.cssText='padding:12px;background:#ffe4b5;color:#473d4b;font-weight:bold';document.querySelector('[aria-label="Shared agent world"]').prepend(b)});
+  // Observe actual blended transforms, not a synthetic clock jump or pose label alone.
+  const personalityLedger=await api('/api/ledger');
+  for(const [id,pose,file] of [[agents[5].id,'lookAround','look-around-desktop.png'],[agents[5].id,'headphones','headphone-adjust-desktop.png'],[agents[0].id,'seatedHeadphones','seated-headphone-adjust-desktop.png']]){
+    await page.selectOption('#followAgent',id);
+    try { await page.waitForFunction(({id,pose})=>JSON.parse(document.getElementById('campus3d').dataset.poses||'[]').some(a=>a.id===id&&a.pose===pose&&(pose==='lookAround'?Math.abs(a.headYaw)>.16:a.rightArmX<-2.5)&&(pose!=='seatedHeadphones'||a.bodyY>.2)),{id,pose},{timeout:90000}); } catch(error) {
+      console.error('Personality observation failed',id,pose,await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
+      await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'personality-failure.png')});
+      throw error;
+    }
+    await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,file)});
+  }
+  assert.deepEqual(await api('/api/ledger'),personalityLedger,'personality gestures must not synthesize protocol events');
   const unchanged=await api('/api/world');
   assert.ok(Number(await page.locator('#campus3d').getAttribute('data-floor-area'))>340,'expanded floor area');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-desktop.png')});

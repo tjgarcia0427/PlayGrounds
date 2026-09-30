@@ -3,7 +3,7 @@ import {hashId,spot,visualActivity,RENDER_LIMIT,CAMPUS,ANNEX_PROPS} from './camp
 
 import {createNavigator,DESK} from './campus-navigation.js';
 import {InteractionDirector,routeLength,walkSpatial,SLIDE_CURVE,blinkAmount} from './campus-interactions.js';
-import {animateCharacter} from './campus-animation.js';
+import {animateCharacter,ambientPose} from './campus-animation.js';
 
 const host=document.getElementById('campus3d');
 const status=document.getElementById('renderStatus');
@@ -401,8 +401,8 @@ function buildCampus() {
         if(interaction.kind==='coffee'&&!walking)a.root.rotation.y=0;
       }
       if(!walking&&!interaction){a.root.rotation.y=a.space==='classroom'?Math.PI:0;a.root.position.y=0;}
-      const phase=(director.clock+a.seed%23)%24;
-      const pose=interaction?.pose||(walking?(a.exitPose||'walk'):a.space==='classroom'?(activity==='working'?(phase>20?'stretch':phase>16?'read':'typing'):'read'):(phase>20?'wave':'idle'));
+      const pose=interaction?.pose||(walking?(a.exitPose||'walk'):ambientPose(a.space,activity,director.clock,a.seed));
+      a.pose=stale?'idle':pose;
       a.animation.update(stale?'idle':pose,dt,!ambientMotion||stale);
       for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;
@@ -411,6 +411,8 @@ function buildCampus() {
       a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
+    host.dataset.animationClock=String(director.clock);
+    host.dataset.poses=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,pose:a.pose,space:a.space,headYaw:a.head.rotation.y,rightArmX:a.arms[1].rotation.x,bodyY:a.body.position.y})));
     host.dataset.interactions=JSON.stringify([...director.active].map(([id,a])=>({id,kind:a.kind,stage:a.stage,pose:a.pose})));
     host.dataset.completed=JSON.stringify(director.completed);
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
