@@ -7,10 +7,9 @@ for(let seed=0;seed<6;seed++){
  const actor=kit.plush(seed),twin=kit.plush(seed),rig=animateCharacter(actor.root);
  assert.equal(actor.root.userData.artStyle,PLUSH_STYLES[seed].name);
  for(const name of ['Head','Body','LeftArm','RightArm','LeftFoot','RightFoot'])assert.ok(actor.root.getObjectByName(name));
- const fields=[];actor.root.traverse(o=>{if(o.isInstancedMesh)fields.push(o)});
- const twins=[];twin.root.traverse(o=>{if(o.isInstancedMesh)twins.push(o)});
- assert.equal(fields.length,2);assert.ok(fields.reduce((n,o)=>n+o.count,0)<=1800);
- fields.forEach((f,i)=>assert.deepEqual(f.instanceMatrix.array,twins[i].instanceMatrix.array));
+ const materials=[];actor.root.traverse(o=>{if(o.material?.bumpMap)materials.push(o.material)});
+ assert.ok(materials.length>0);assert.ok(materials.every(m=>m.bumpMap.image.data.length===128*128*4));
+ assert.ok(materials.every(m=>m.bumpMap===materials[0].bumpMap),'shared fabric texture');
  for(const pose of ['typing','walk','wave','seatedHeadphones','climb','slide','hang','sip']){
   for(let i=0;i<60;i++)rig.update(pose,.02);
   actor.root.updateMatrixWorld(true);actor.root.traverse(o=>assert.ok(o.matrixWorld.elements.every(Number.isFinite)));
@@ -22,4 +21,4 @@ for(let seed=0;seed<6;seed++){
  rig.dispose();actor.dispose();twin.dispose();
 }
 assert.equal(sharedDisposals,0,'removing actors must not dispose geometry used by surviving actors');
-console.log('Six plush rigs: all animation bindings, finite transforms, root isolation, deterministic pile, still mode and shared geometry lifetime passed.');
+console.log('Six plush rigs: all animation bindings, finite transforms, root isolation, shared bounded fabric texture, still mode and shared geometry lifetime passed.');

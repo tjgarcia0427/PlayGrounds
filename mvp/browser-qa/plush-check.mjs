@@ -21,7 +21,7 @@ try{
  await page.evaluate(()=>{const b=document.createElement('p');b.textContent='ART QA — 24 synthetic agents; original procedural models inspired by Muse’s art pack';b.style.cssText='padding:12px;background:#ffe4b5;color:#473d4b;font-weight:bold';document.querySelector('[aria-label="Shared agent world"]').prepend(b)});
  const worldBefore=await api('/api/world'),ledgerBefore=await api('/api/ledger');
  const styles=JSON.parse(await page.locator('#campus3d').getAttribute('data-character-styles'));assert.equal(styles.length,24);
- async function shot(file){await page.evaluate(()=>window.scrollTo(0,0));const box=await page.locator('[aria-label="Shared agent world"]').boundingBox();await page.screenshot({path:join(output,file),clip:box,timeout:60000});}
+ async function shot(file){await page.evaluate(()=>window.scrollTo(0,0));const box=await page.locator('[aria-label="Shared agent world"]').boundingBox();await page.screenshot({path:join(output,file),clip:box,fullPage:true,timeout:60000});}
  const seen=new Set();for(const actor of styles){if(seen.has(actor.style))continue;seen.add(actor.style);await page.selectOption('#followAgent',actor.id);if(await page.locator('#portraitView').getAttribute('aria-pressed')!=='true')await page.click('#portraitView');await page.waitForFunction(id=>{const d=document.getElementById('campus3d').dataset;return d.portrait==='true'&&d.following===id},actor.id);await shot(`plush-${actor.style.replaceAll(' ','-')}.png`);}
  await page.click('#cameraHome');await page.click('#playTab');await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground'&&document.getElementById('campus3d').dataset.portrait==='false');
  await shot('plush-playground.png');

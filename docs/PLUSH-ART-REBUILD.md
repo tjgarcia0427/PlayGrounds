@@ -11,10 +11,11 @@ performance on phones.
 - Six deterministic companion styles: peach fox, lilac owl, mint bunny, sky bear,
   buttercup bear and rose fox. Larger heads, species-specific ears/tufts/tails,
   cream face/belly panels, glossy catchlights, blush, stitched smile and headphones.
-- Original seeded fabric bump texture and sparse opaque instanced pile. Two pile
-  draw calls for the portrait character only; 1,800 small fleece tufts. Room views
-  use fabric bump shading without subpixel fibers. No transparent fur shells, downloaded
-  textures, reference-image pixels, external CDN or inference service.
+- Original seeded fabric bump texture and soft sheen. Experimental geometric fur
+  was rejected after Chrome inspection: sparse fibers looked bristly and rounded
+  tufts looked pebbly. This pass uses clean fabric shading, not a claim of fluffy
+  offline-render fur. No downloaded textures, reference-image pixels or external CDN.
+- Tiny face details do not cast separate shadows; head/body/limbs retain shadows.
 - Rounded furniture/building edges, mint slide supports and pink toy turret dome.
 - Warm rear bookshelves with colored books, arch crowns, window plants and desk
   stationery. Bookshelf footprints are included in pathfinding.
@@ -39,7 +40,7 @@ rights to its images.
 
 Named joints and pivot anchors retain the existing procedural clip contract.
 `test_plush_art.mjs` tests all six actual rigs, finite animated transforms,
-navigation-root isolation, still mode, deterministic pile and shared geometry
+navigation-root isolation, still mode, shared bounded fabric texture and shared geometry
 lifetime. Existing route/equipment/interruption/personality suites remain intact.
 
 `browser-qa/plush-check.mjs` uses explicitly pinned Google Chrome with sandbox on,

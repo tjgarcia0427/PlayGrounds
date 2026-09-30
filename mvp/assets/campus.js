@@ -409,7 +409,6 @@ function buildCampus() {
       a.mug.visible=!!interaction?.mug;
       a.root.scale.setScalar(stale?.88:1);
       a.root.visible=detail?a===followed:room==='campus'||a.space===room;
-      for(const tuft of a.fibers)tuft.visible=!!detail&&a===followed;
       a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
