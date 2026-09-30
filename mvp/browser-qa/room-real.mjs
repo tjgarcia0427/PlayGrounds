@@ -45,7 +45,7 @@ try {
   secrets.push(invite.token);
   console.log('QA stage: member joins');await member.goto(base);await label(member);await member.locator('#roomTools > summary').click();await member.click('#joinRoom');await member.fill('#joinRoomId',rid);await member.fill('#inviteKey',invite.token);await member.fill('#joinName','QA real companion');await member.click('#dialogSubmit');const memberKey=await saved(member);
   await member.waitForFunction(()=>document.getElementById('goalTitle').textContent.includes('Private real integration goal'));
-  assert.equal((await api(`/api/rooms/${rid}/join`,null,{invite_token:invite.token,name:'Reuse'})).status,403,'single-use enforced');
+  assert.equal((await api(`/api/rooms/${rid}/join`,null,{invite_token:invite.token,name:'Reuse'})).status,410,'single-use enforced');
   console.log('QA stage: member sees private goal');const memberInfo=await json(`/api/rooms/${rid}`,memberKey);
   assert.equal(await member.getByRole('button',{name:'Invite companions',exact:true}).count(),0,'no owner controls for member');
   assert.equal((await api(`/api/rooms/${rid}/invites`,memberKey)).status,403,'owner-only API');
