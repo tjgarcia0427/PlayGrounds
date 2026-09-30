@@ -53,12 +53,26 @@ jobs:
           node mvp/test_personality.mjs
           node --check mvp/assets/campus.js
 
+      - name: Install pinned browser QA tools
+        run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+
+      - name: Chrome art material sample
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/art-check.mjs
+
+      - name: Upload art comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: art-chrome-visuals
+          path: mvp/browser-qa/artifacts/art-*
+          if-no-files-found: warn
+
       - name: Chrome 3D visual QA
         env:
           CHROME_PATH: /usr/bin/google-chrome
-        run: |
-          npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
-          node mvp/browser-qa/check.mjs
+        run: node mvp/browser-qa/check.mjs
 
       - name: Upload labeled Chrome screenshots
         if: always()
