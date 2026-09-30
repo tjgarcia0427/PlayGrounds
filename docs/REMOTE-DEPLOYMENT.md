@@ -102,8 +102,13 @@ loopback behavior when unset). **Implemented** in `mvp/server.py`:
    POST besides same-origin `http(s)://Host` (e.g. the public HTTPS URL
    served through a tunnel). Compared verbatim; never derived from
    forwarded headers. Default: unset — same-origin only.
-7. **Proxy log hygiene** — strip or never log query strings, because the
-   legacy SSE `?token=` path still puts the bearer token in the URL.
+7. **Proxy query-credential policy** — the server accepts the legacy SSE
+   `?token=` fallback on **any** connection: it cannot see TLS terminated
+   at a reverse proxy, so it cannot enforce "query tokens only over TLS"
+   itself. Public deployments MUST therefore reject or strip query
+   credentials at the reverse proxy (the Caddy template in unmerged PR #36
+   already does this). At minimum, strip or never log query strings,
+   because the legacy path still puts the Bearer <redacted> in the URL.
    (Caddy: `log { format json }` without `request>uri` query, or a
    `handle` that drops it.)
 

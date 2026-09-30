@@ -176,6 +176,10 @@ IDEMPOTENCY_TTL = 86400
 lock = threading.RLock()
 subscribers = {}  # queue -> room_id (None = lobby)
 sse_owner = {}    # queue -> agent_id (None = lobby / unauthenticated)
+sse_gen = {}      # queue -> generation counter, bumped under lock on every
+                  # revocation; a handler revalidates its captured generation
+                  # after each dequeue so a payload dequeued before revocation
+                  # is never written after it
 
 # Explicit allowlist for the public /api/state snapshot. server_salt,
 # idempotency records and the rooms registry (private member data and
@@ -521,6 +525,7 @@ def emit(etype, data):
                 sub.put_nowait(payload)
             except queue.Full:
                 del subscribers[sub]  # client reconnects and obtains current state
+                sse_gen[sub] = sse_gen.get(sub, 0) + 1  # revoked: same stream
     return ev
 
 
@@ -537,6 +542,10 @@ def _close_room_streams(rid, agent_id=None):
                 break
         subscribers.pop(sub, None)
         sse_owner.pop(sub, None)
+        # Bump the generation so a handler that already dequeued a payload
+        # detects the revocation at its post-dequeue revalidation and drops
+        # the payload instead of writing it.
+        sse_gen[sub] = sse_gen.get(sub, 0) + 1
 
 
 GENESIS_HASH = "genesis:" + hashlib.sha256(b"playgrounds-v02-ledger").hexdigest()[:32]
@@ -2363,6 +2372,20 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             return True
 
+    def _room_stream_revalidate(self, rid, token, agent_id, sub, gen):
+        """Post-dequeue revalidation for a room SSE subscription: under the
+        lock (never across wfile writes), confirm the stream is still
+        authorized AND its generation still matches the one captured at
+        subscription. A revocation that landed between the pre-check and the
+        dequeue — or during an earlier replay write — bumps the generation,
+        so the already-dequeued payload is dropped instead of delivered.
+        The lock is held only for the dict lookups; a slow client stalls
+        only its own handler thread, never the server."""
+        with lock:
+            if sse_gen.get(sub) != gen:
+                return False
+            return self._room_stream_valid(rid, token, agent_id, sub)
+
     def _room_stream_close(self, sub):
         """Close a room SSE stream and purge any queued private payloads.
 
@@ -2378,15 +2401,22 @@ class Handler(BaseHTTPRequestHandler):
                     break
             subscribers.pop(sub, None)
             sse_owner.pop(sub, None)
+            sse_gen[sub] = sse_gen.get(sub, 0) + 1
         self.close_connection = True
 
     def _room_sse(self, rid, parsed):
         """Room-scoped server-sent events. The bearer token travels in the
         Authorization header (fetch streaming); native EventSource clients
-        that cannot set headers may use ?token= instead (requires TLS when the
-        server is ever exposed beyond loopback). Membership is revalidated
-        before replay, on every delivery and on idle; revoked or deleted
-        streams are closed with their queued payloads purged."""
+        that cannot set headers may use ?token= instead. The server accepts
+        ?token= on any connection — it cannot see TLS terminated at a
+        reverse proxy — so public deployments MUST reject or strip query
+        credentials at the proxy (the Caddy template in PR #36 does this).
+        Membership is revalidated before replay, after every dequeue and on
+        every replay write, and on idle; a per-subscriber generation counter
+        (bumped under lock on every revocation) closes the check-to-delivery
+        race, so a payload dequeued before member-removal or room-deletion
+        is dropped, never written. Revoked or deleted streams are closed
+        with their queued payloads purged."""
         qs = parse_qs(parsed.query)
         try:
             since = int(qs.get("since", [0])[0])
@@ -2410,6 +2440,8 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             subscribers[sub] = rid
             sse_owner[sub] = agent_id
+            sse_gen[sub] = 0
+            gen = 0
             replay = [ev for ev in room["events"] if ev["seq"] > since]
         try:
             self.send_response(200)
@@ -2419,7 +2451,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.connection.settimeout(20)
             for ev in replay:
-                if not self._room_stream_valid(rid, token, agent_id, sub):
+                if not self._room_stream_revalidate(rid, token, agent_id,
+                                                    sub, gen):
                     self._room_stream_close(sub)
                     return True
                 self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
@@ -2438,6 +2471,13 @@ class Handler(BaseHTTPRequestHandler):
                             self.close_connection = True
                             break
                     payload = b": ping\n\n"
+                # Revalidate AFTER dequeue: revocation may have landed while
+                # the payload sat in the queue. The lock is held only for the
+                # revalidation lookups, never across the write below.
+                if not self._room_stream_revalidate(rid, token, agent_id,
+                                                    sub, gen):
+                    self._room_stream_close(sub)
+                    return True
                 self.wfile.write(payload)
                 self.wfile.flush()
         except (OSError, TimeoutError):
@@ -2446,6 +2486,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 subscribers.pop(sub, None)
                 sse_owner.pop(sub, None)
+                sse_gen.pop(sub, None)
         return True
 
     def _room_route_post(self, parts, body):

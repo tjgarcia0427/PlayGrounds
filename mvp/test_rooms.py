@@ -44,6 +44,63 @@ def reset_state():
     srv.save_state()
 
 
+class _FakeSSEHandler:
+    """Minimal stand-in for the request Handler to drive _room_sse
+    in-process: captures everything the handler would write to the socket.
+    Real validation/close logic is bound from srv.Handler."""
+
+    _room_stream_valid = srv.Handler._room_stream_valid
+    _room_stream_close = srv.Handler._room_stream_close
+    _room_stream_revalidate = srv.Handler._room_stream_revalidate
+
+    def __init__(self, token):
+        self.headers = {"Authorization": "Bearer " + token}
+        self.written = bytearray()
+        self.close_connection = False
+        self.status = None
+        self.connection = self
+        self.wfile = self
+        self.sub = None
+
+    def settimeout(self, t):
+        pass
+
+    def send_response(self, code):
+        self.status = code
+
+    def send_header(self, k, v):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def write(self, b):
+        self.written.extend(b)
+
+    def flush(self):
+        pass
+
+    def _send(self, code, obj):
+        self.status = code
+
+
+class _RevokingSSEHandler(_FakeSSEHandler):
+    """Fake SSE handler that performs a revocation (under the lock) during
+    the first socket write, modelling revocation landing mid-replay."""
+
+    def __init__(self, token, revoke):
+        super().__init__(token)
+        self._revoke = revoke
+        self._writes = 0
+
+    def write(self, b):
+        self._writes += 1
+        if self._writes == 1:
+            with srv.lock:
+                self._revoke()
+        super().write(b)
+
+
 # ------------------------------------------------------------------ Part A
 
 class RoomUnitTests(unittest.TestCase):
@@ -185,6 +242,148 @@ class RoomUnitTests(unittest.TestCase):
             srv.sse_owner.pop(q1, None)
             srv.subscribers.pop(q2, None)
             srv.sse_owner.pop(q2, None)
+
+    # -- deterministic SSE revocation/delivery race tests -----------------
+    # The handler runs in-process against a fake socket. The queue's blocking
+    # get is replaced with a probe that performs revocation under the lock
+    # and then returns a previously queued private payload — exactly the
+    # reviewer's race model. No sleeps or timing: the interleaving is forced.
+
+    def _sse_fixture(self, name="Race"):
+        room = srv.blank_room(name)
+        srv.state["rooms"][room["id"]] = room
+        agent_id = "agent_race"
+        token = "tok_race_secret_value"
+        room["auth"][srv.token_hash(token)] = agent_id
+        room["members"][agent_id] = {"id": agent_id, "role": "member",
+                                     "joined_at": "t", "name": "Racer"}
+        return room, agent_id, token
+
+    def _run_sse_handler(self, fake, rid, since=999999):
+        import threading
+        from urllib.parse import urlparse
+        t = threading.Thread(
+            target=srv.Handler._room_sse,
+            args=(fake, rid,
+                  urlparse(f"/api/rooms/{rid}/events?since={since}")),
+            daemon=True)
+        t.start()
+        t.join(10)
+        self.assertFalse(t.is_alive(), "SSE handler thread did not terminate")
+        return t
+
+    def test_sse_no_write_after_dequeue_member_removal(self):
+        room, agent_id, token = self._sse_fixture("RaceRemoval")
+        rid = room["id"]
+        MARK = b"MARKED-PRIVATE-PAYLOAD-REMOVAL"
+        real_Queue = srv.queue.Queue
+        probe = {}
+
+        class ProbeQueue(real_Queue):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                probe["sub"] = self
+                self._armed = True
+
+            def get(self, *a, **k):
+                if self._armed:
+                    self._armed = False
+                    # The race: the private payload is dequeued first, and
+                    # revocation lands under the lock before the handler's
+                    # post-dequeue revalidation runs.
+                    self.put(b"data: " + MARK + b"\n\n")
+                    payload = super().get_nowait()
+                    with srv.lock:
+                        srv._close_room_streams(rid, agent_id)
+                    return payload
+                return super().get(*a, **k)
+
+        srv.queue.Queue = ProbeQueue
+        fake = _FakeSSEHandler(token)
+        try:
+            self._run_sse_handler(fake, rid)
+        finally:
+            srv.queue.Queue = real_Queue
+            with srv.lock:
+                srv.subscribers.pop(probe.get("sub"), None)
+                srv.sse_owner.pop(probe.get("sub"), None)
+                srv.sse_gen.pop(probe.get("sub"), None)
+        self.assertEqual(fake.status, 200)
+        self.assertNotIn(MARK, bytes(fake.written),
+                         "private payload dequeued before member-removal "
+                         "was written after revocation")
+        self.assertTrue(fake.close_connection,
+                        "revoked stream did not force the socket closed")
+
+    def test_sse_no_write_after_dequeue_room_delete(self):
+        room, agent_id, token = self._sse_fixture("RaceDelete")
+        rid = room["id"]
+        MARK = b"MARKED-PRIVATE-PAYLOAD-DELETE"
+        real_Queue = srv.queue.Queue
+        probe = {}
+
+        class ProbeQueue(real_Queue):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                probe["sub"] = self
+                self._armed = True
+
+            def get(self, *a, **k):
+                if self._armed:
+                    self._armed = False
+                    self.put(b"data: " + MARK + b"\n\n")
+                    payload = super().get_nowait()
+                    with srv.lock:
+                        srv._close_room_streams(rid)
+                        del srv.state["rooms"][rid]
+                    return payload
+                return super().get(*a, **k)
+
+        srv.queue.Queue = ProbeQueue
+        fake = _FakeSSEHandler(token)
+        try:
+            self._run_sse_handler(fake, rid)
+        finally:
+            srv.queue.Queue = real_Queue
+            with srv.lock:
+                srv.subscribers.pop(probe.get("sub"), None)
+                srv.sse_owner.pop(probe.get("sub"), None)
+                srv.sse_gen.pop(probe.get("sub"), None)
+        self.assertEqual(fake.status, 200)
+        self.assertNotIn(MARK, bytes(fake.written),
+                         "private payload dequeued before room-deletion "
+                         "was written after revocation")
+        self.assertTrue(fake.close_connection,
+                        "deleted room's stream did not force the socket closed")
+
+    def test_sse_replay_revocation_suppresses_remaining(self):
+        room, agent_id, token = self._sse_fixture("RaceReplay")
+        rid = room["id"]
+        marks = [b"REPLAY-MARK-1", b"REPLAY-MARK-2", b"REPLAY-MARK-3"]
+        room["events"] = [
+            {"seq": i + 1, "ts": "t", "type": "note",
+             "data": {"mark": m.decode()}} for i, m in enumerate(marks)]
+
+        def revoke():
+            srv._close_room_streams(rid, agent_id)
+
+        fake = _RevokingSSEHandler(token, revoke)
+        self._run_sse_handler(fake, rid, since=0)
+        with srv.lock:  # defensive: the handler's finally already purges
+            for sub, srid in list(srv.subscribers.items()):
+                if srid == rid:
+                    srv.subscribers.pop(sub, None)
+                    srv.sse_owner.pop(sub, None)
+                    srv.sse_gen.pop(sub, None)
+        written = bytes(fake.written)
+        # The first replay write raced the revocation and was delivered, but
+        # every remaining replay write must be suppressed.
+        self.assertIn(marks[0], written)
+        self.assertNotIn(marks[1], written,
+                         "replay write after revocation was delivered")
+        self.assertNotIn(marks[2], written,
+                         "replay write after revocation was delivered")
+        self.assertTrue(fake.close_connection)
 
     def test_join_bucket_bounded(self):
         old_max = srv.JOIN_BUCKET_MAX
@@ -909,6 +1108,170 @@ class RoomApiTests(unittest.TestCase):
         self.assertEqual(post_origin("https://127.0.0.1:8481"), 200)
         self.assertEqual(post_origin("https://evil.example.com"), 403)
         self.assertEqual(post_origin("http://evil.example.com"), 403)
+
+
+# -------------------------------------------- Part B2: restart persistence
+
+class RoomRestartTests(unittest.TestCase):
+    """Real process-restart persistence: boot an actual server subprocess,
+    build room state over HTTP, kill the process, boot a fresh process on
+    the same state dir, and verify room/lobby separation plus both ledger
+    hash chains survived the restart."""
+
+    def _free_port(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    def _start(self, state_path, port):
+        env = dict(os.environ, PLAYGROUNDS_STATE_PATH=state_path,
+                   PLAYGROUNDS_PORT=str(port))
+        proc = subprocess.Popen(
+            [sys.executable, os.path.join(HERE, "server.py")],
+            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        base = f"http://127.0.0.1:{port}"
+        for _ in range(80):
+            try:
+                urllib.request.urlopen(base + "/api/policy",
+                                       timeout=2).read()
+                return proc, base
+            except Exception:
+                time.sleep(0.25)
+        proc.terminate()
+        raise RuntimeError("server did not start")
+
+    def _stop(self, proc):
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=15)
+
+    def _req(self, base, method, path, body=None, token=None):
+        r = urllib.request.Request(base + path, method=method)
+        if body is not None:
+            r.data = json.dumps(body).encode()
+            r.add_header("Content-Type", "application/json")
+        if token:
+            r.add_header("Authorization", "Bearer " + token)
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                raw = resp.read() or b"{}"
+                try:
+                    return resp.status, json.loads(raw)
+                except Exception:
+                    return resp.status, {"_raw": raw[:200]}
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except Exception:
+                return e.code, {}
+
+    def _verify_chain(self, events):
+        """Recompute the hash chain exactly like srv.verify_ledger_chain."""
+        self.assertGreater(len(events), 0, "ledger is empty")
+        prev = None
+        for i, e in enumerate(events):
+            self.assertEqual(
+                srv.ledger_checksum(e, e.get("prev", srv.GENESIS_HASH)),
+                e.get("checksum"),
+                f"ledger entry seq={e.get('seq')} checksum mismatch")
+            if i > 0:
+                self.assertEqual(e.get("prev"), prev,
+                                 f"ledger entry seq={e.get('seq')} not "
+                                 "chained to previous checksum")
+            prev = e.get("checksum")
+        return len(events)
+
+    def test_restart_preserves_room_and_ledgers(self):
+        import shutil
+        tmp = tempfile.mkdtemp(prefix="playgrounds-restart-test-")
+        state_path = os.path.join(tmp, "state.json")
+        proc1, base1 = self._start(state_path, self._free_port())
+        try:
+            # lobby activity -> lobby ledger
+            code, la = self._req(base1, "POST", "/api/agents/register",
+                                 {"name": "LobbyLars"})
+            self.assertEqual(code, 200, la)
+            lobby_agent = la["agent"]["id"]
+            # room: create + invite + join
+            code, out = self._req(base1, "POST", "/api/rooms",
+                                  {"name": "Persist"})
+            self.assertEqual(code, 200, out)
+            rid, otok, owner = (out["room"]["id"], out["token"],
+                                out["agent"]["id"])
+            code, inv = self._req(base1, "POST",
+                                  f"/api/rooms/{rid}/invites", {},
+                                  token=otok)
+            self.assertEqual(code, 200, inv)
+            code, joined = self._req(
+                base1, "POST", f"/api/rooms/{rid}/join",
+                {"invite_token": inv["token"], "name": "PersistGuest"})
+            self.assertEqual(code, 200, joined)
+            mtok, member = joined["token"], joined["agent"]["id"]
+            # room ledger activity: goal + task, then A2A task/send
+            code, goal = self._req(base1, "POST", f"/api/rooms/{rid}/goals",
+                                   {"title": "Ship", "budget": 200},
+                                   token=otok)
+            self.assertEqual(code, 200, goal)
+            code, task = self._req(
+                base1, "POST",
+                f"/api/rooms/{rid}/goals/{goal['id']}/tasks",
+                {"title": "Build", "bounty": 50,
+                 "success_criteria": "done"}, token=otok)
+            self.assertEqual(code, 200, task)
+            code, sent = self._req(
+                base1, "POST", f"/api/rooms/{rid}/a2a",
+                {"jsonrpc": "2.0", "id": 1, "method": "task/send",
+                 "params": {"goal_id": goal["id"], "title": "ViaA2A"}},
+                token=mtok)
+            self.assertEqual(code, 200, sent)
+        finally:
+            self._stop(proc1)
+        # fresh process, same state dir
+        proc2, base2 = self._start(state_path, self._free_port())
+        try:
+            # the room survived: bearer auth still works, members intact
+            code, room = self._req(base2, "GET", f"/api/rooms/{rid}",
+                                   token=otok)
+            self.assertEqual(code, 200, room)
+            member_ids = [m["agent_id"] for m in room["members"]]
+            self.assertIn(owner, member_ids)
+            self.assertIn(member, member_ids)
+            # room/lobby separation holds after restart
+            code, lobby = self._req(base2, "GET", "/api/state")
+            self.assertEqual(code, 200)
+            self.assertNotIn(owner, lobby["agents"])
+            self.assertNotIn(member, lobby["agents"])
+            self.assertIn(lobby_agent, lobby["agents"])
+            # the room is still usable: owner can mint another invite
+            code, inv2 = self._req(base2, "POST",
+                                   f"/api/rooms/{rid}/invites", {},
+                                   token=otok)
+            self.assertEqual(code, 200, inv2)
+            # per-room ledger hash chain verifies
+            code, rled = self._req(base2, "GET", f"/api/rooms/{rid}/ledger",
+                                   token=otok)
+            self.assertEqual(code, 200, rled)
+            n_room = self._verify_chain(rled["events"])
+            # lobby ledger hash chain verifies
+            code, lled = self._req(base2, "GET", "/api/ledger")
+            self.assertEqual(code, 200, lled)
+            n_lobby = self._verify_chain(lled["events"])
+            # the room's task activity landed in the room ledger, not lobby's
+            room_types = {e["type"] for e in rled["events"]}
+            self.assertIn("goal_created", room_types)
+            lobby_types = {e["type"] for e in lled["events"]}
+            self.assertNotIn("goal_created", lobby_types)
+        finally:
+            self._stop(proc2)
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertGreater(n_room, 0)
+        self.assertGreater(n_lobby, 0)
 
 
 # ------------------------------------------------------------------ Part C

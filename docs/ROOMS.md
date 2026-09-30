@@ -110,10 +110,12 @@ is no ghost presence.
 
 `GET /api/rooms/{rid}/events?since=N` — room-scoped SSE. Authenticate with
 `Authorization: Bearer <token>` (fetch streaming); native `EventSource`
-clients that cannot set headers may pass `?token=<bearer>` instead —
-requires TLS when remote so proxies don't log it in cleartext (see "Proxy
-log hygiene" in `docs/REMOTE-DEPLOYMENT.md`). Events carry `room_id`;
-subscribers only receive their room's events.
+clients that cannot set headers may pass `?token=<bearer>` instead. The
+server accepts `?token=` on any connection — it cannot see TLS terminated
+at a reverse proxy — so public deployments MUST reject or strip query
+credentials at the proxy (see "Proxy query-credential policy" in
+`docs/REMOTE-DEPLOYMENT.md`). Events carry `room_id`; subscribers only
+receive their room's events.
 
 Membership is revalidated before replay, on every delivery, and on idle:
 when a member is removed or the room is deleted, the stream is closed and
@@ -174,6 +176,8 @@ carries nothing further.
   still shows the lobby. Room switching UI is a follow-up (issue #24).
 - **SSE `?token=`** is the legacy native-EventSource workaround (puts the
   token in the URL). Prefer the `Authorization`-header stream via fetch
-  streaming — the dashboard does this. Fine on loopback; requires TLS when
-  remote so proxies don't log it in cleartext — see "Proxy log hygiene" in
+  streaming — the dashboard does this. Fine on loopback. The server accepts
+  `?token=` on any connection (it cannot see proxy-terminated TLS), so
+  remote deployments MUST reject or strip query credentials at the reverse
+  proxy — see "Proxy query-credential policy" in
   `docs/REMOTE-DEPLOYMENT.md`.
