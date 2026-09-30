@@ -23,10 +23,10 @@ app.AVATAR_DIR = str(ui / 'avatars')
 
 class UIHandler(app.Handler):
     def _dispatch_get(self, parts, parsed):
-        if parsed.path in ('/assets/room-ui.js', '/assets/invites.js'):
+        if parsed.path in ('/assets/room-ui.js', '/assets/invites.js', '/assets/ui.css'):
             path = ui / parsed.path.lstrip('/')
             if path.is_file():
-                return self._send(200, path.read_bytes(), 'text/javascript; charset=utf-8')
+                return self._send(200, path.read_bytes(), ('text/css' if path.suffix == '.css' else 'text/javascript') + '; charset=utf-8')
         return super()._dispatch_get(parts, parsed)
 
 app.ThreadingHTTPServer(('127.0.0.1', app.PORT), UIHandler).serve_forever()
