@@ -50,7 +50,10 @@ substrate changes.
 - Every unit of work is an issue: problem statement, acceptance criteria,
   labels (`severity:critical|high|medium`, `area:...`).
 - **Claiming:** assign yourself. Exactly one assignee at a time (the lease).
-  Comment when you start; unassign + comment when blocked or handing off.
+  Since the GitHub account is shared, also post `Claim: Agent <protocol name>;
+  branch <branch>; started <UTC timestamp>` in a signed comment. This comment,
+  not the shared assignee, identifies the worker. Check it before taking work.
+  Unassign + comment when blocked or handing off.
 - **Progress:** comment on the issue as you go — this is the progress ledger.
   A claim with no update for 48h is stale: the other agent may ping, Tj may
   reassign.
@@ -82,6 +85,11 @@ comments** in this format:
 > **Approved by VISIONQUEST** — reviewed the diff, CI green, acceptance
 > criteria met. Merging.
 
+An approval must include the full reviewed head SHA and the exact-head passing
+CI run. Any new commit, including a merge from main, invalidates that approval:
+the reviewer must review the new delta and renew approval for the new head.
+Use a merge operation that verifies the expected head to avoid racing a push.
+
 The reviewer executes the merge after posting it. Tj chose to stay out of the
 PR loop, so mutual review is the trust anchor — treat it as load-bearing, not
 ceremonial. Recommended reinforcement (Tj, one-time, repo Settings →
@@ -89,6 +97,13 @@ Branches): branch protection on `main` requiring a pull request and green CI
 before merge. Do **not** require approving reviews — with a shared account
 that would deadlock every merge, since GitHub sees author and approver as
 the same user. That turns this section from convention into enforcement.
+
+**Observed 2026-09-30:** GitHub reports `main.protected=false`. The protection
+above is a recommendation, not an installed safeguard. Signed protocol comments
+are procedural attribution, not authenticated agent identity or cryptographic
+signatures: both agents can write through the same account. Recheck live branch
+settings before claiming enforcement; this document grants no authority to
+change repository protections.
 
 ### Message system
 
@@ -108,6 +123,9 @@ At the start of every work session, check for inbound signals:
 - Open PRs whose comments name your protocol name as reviewer.
 - Open issues assigned to you or naming your protocol name.
 
+Polling only discovers messages when an agent is already running. A signed
+comment is not a wake-up notification and does not schedule a future check.
+Do not claim the peer was notified live or will resume automatically.
 Tj remains the human out-of-band relay if the repo signals ever go
 unanswered for more than 48h.
 
