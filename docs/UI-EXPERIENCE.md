@@ -79,3 +79,19 @@ The existing real-server Chrome animation tour remains separate. Run both with
 explicit Google Chrome on an x64 runner. Local ARM has no compatible Chrome.
 Actual fixed-backend room integration remains a merge gate after #23 is fixed.
 No claim of final WCAG certification or real-device GPU performance is made.
+
+## Pinned real-backend compatibility gate
+
+`room-real.mjs` runs Chrome against PR23 backend revision
+`525ab16ba523e0d69909fc56f5e31054210c901e` with a fresh temporary state file
+and a random operator key. No API routes are mocked. The launcher adds only
+the two UI static-script routes and points static assets at this branch. It
+checks operator creation, a real single-use invite, member login, cross-room
+denial, private/lobby separation, member removal clearing the UI, reload key
+forgetting and desktop/mobile layout. On the invitation branch it additionally
+uses real mint/revoke owner dialogs and tests redemption rejection.
+
+This is compatibility evidence, not approval of PR23: its final-check/write
+SSE revocation race remains blocking, and this pinned backend predates games.
+After the backend is repaired and integrated with main, update the pin and
+verify the actual merged production routing; do not deploy the QA launcher.

@@ -116,3 +116,33 @@ jobs:
       - name: Stop test server
         if: always()
         run: kill "$(cat "$RUNNER_TEMP/ci-server.pid")" 2>/dev/null || true
+
+  room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 525ab16ba523e0d69909fc56f5e31054210c901e
+          path: .qa-room-backend
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Real room-backend compatibility (not security approval)
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          ROOM_BACKEND_ROOT: .qa-room-backend
+        run: |
+          npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+          node mvp/browser-qa/room-real.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-room-ui-chrome
+          path: mvp/browser-qa/artifacts/ui-real-*.png
+          if-no-files-found: warn
