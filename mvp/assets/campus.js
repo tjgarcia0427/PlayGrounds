@@ -92,7 +92,7 @@ function buildCampus() {
   }
   // A wood-slat skylight/pergola hints at a modern campus without hiding the agents.
   for(let i=0;i<15;i++)box('#c99f7c',[1.6+i*1.07,4.5,-5.6],[.13,.18,2.4]);
-  box('#d6a29f',[6.8,4.45,-6.7],[17,.24,.6]);
+  box('#d6a29f',[8.8,4.45,-6.7],[17,.24,.6]);
   box('#d6a29f',[17,4.45,-1.2],[.6,.24,11.5]);
   for(const x of [3,11]) {
     box('#eed3a7',[x,2.65,-6.5],[2.75,2.55,.15]);
@@ -373,7 +373,6 @@ function buildCampus() {
     for(const {o,side} of sets)o.visible=(room==='campus'||side===room)&&(o.userData.occupied!==false);
     host.dataset.room=room;
     host.dataset.floorArea=String(CAMPUS.width*CAMPUS.depth);
-    host.dataset.visibleAnnex=room==='campus'?'garden,reading':room==='playground'?'garden':'reading';
     host.dataset.following=follow.value;
     currentExtent=ambientMotion?THREE.MathUtils.damp(currentExtent,targetExtent,6,dt):targetExtent;
     camera.left=-currentExtent*viewAspect;camera.right=currentExtent*viewAspect;camera.top=currentExtent;camera.bottom=-currentExtent;

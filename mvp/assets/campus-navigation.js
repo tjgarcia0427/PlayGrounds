@@ -27,7 +27,7 @@ export function obstacles() {
   for(const x of [-16.5,-12,-8,-4,4,8,12,16.5])add(x,10.3,.17,.17);
   // All crossing uses the gate, not the imaginary room-divider wall.
   boxes.push({minX:-.35,maxX:.35,minZ:-6.2,maxZ:5.25});
-  boxes.push({minX:-.35,maxX:.35,minZ:6.65,maxZ:CAMPUS.maxZ});
+  boxes.push({minX:-.35,maxX:.35,minZ:6.65,maxZ:CAMPUS.maxZ+1});
   return boxes;
 }
 export function blocked(p,boxes=obstacles()) {
