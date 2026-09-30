@@ -26,7 +26,8 @@
     return data;
   }
   const post = (path,body={},s) => request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},s);
-  function closeDialog() { $('roomDialog').close(); }
+  function clearDialog() { $('dialogContent').replaceChildren();$('roomForm').onsubmit=null; }
+  function closeDialog() { clearDialog();$('roomDialog').close(); }
   function openDialog(title, content, submit, label='Continue') {
     text('dialogTitle',title); $('dialogContent').replaceChildren(content);
     const form=$('roomForm'), button=$('dialogSubmit');
@@ -143,7 +144,7 @@
   $('disconnectRoom').onclick=()=>{sessions.delete(current.id);switchTo(null);};
   $('dialogCancel').onclick=closeDialog;
   $('roomDialog').addEventListener('cancel',e=>{if($('roomForm').getAttribute('aria-busy')==='true')e.preventDefault();});
-  $('roomDialog').addEventListener('close',()=>{$('dialogContent').replaceChildren();$('roomForm').onsubmit=null;});
+  $('roomDialog').addEventListener('close',()=>{if(!$('roomDialog').open)clearDialog();});
   window.RoomUI={scope,isCurrent,request,post,renderMembers,updateMetadata,get current(){return current},forgetCurrent(){if(current)sessions.delete(current.id);switchTo(null);},openDialog,fields,secretOnce,closeDialog,loadDirectory,switchTo,
     start(callback){change=callback;loadDirectory().catch(e=>text('directoryStatus',safeError(e)));startStream();}};
 })();
