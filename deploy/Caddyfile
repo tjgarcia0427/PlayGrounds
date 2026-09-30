@@ -1,0 +1,21 @@
+# Stage only. Set PLAYGROUNDS_HOST to an owned DNS hostname before use.
+# Existing Caddy installations: merge this site; never replace other sites.
+{$PLAYGROUNDS_HOST} {
+	header {
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	# Never accept legacy credentials in query strings, even if backend does.
+	@queryCredential query token=*
+	respond @queryCredential "Use Authorization headers, not URL credentials." 400
+	reverse_proxy 127.0.0.1:8472 {
+		flush_interval -1
+		# Current backend must use socket peer for rate limits until an explicit
+		# trusted-proxy policy is implemented. Never trust client IP headers.
+		header_up -CF-Connecting-IP
+		header_up -X-Forwarded-For
+		header_up -X-Real-IP
+	}
+	# No access log: do not record invite bodies, headers or query credentials.
+}
