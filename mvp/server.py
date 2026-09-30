@@ -48,8 +48,16 @@ Secure rooms (authenticated, isolated; see docs/ROOMS.md):
   POST /api/rooms                        {name, ...agent fields} -> {room, agent, token}
                                          (bootstrap: creator becomes owner)
   GET  /api/rooms                        room directory (ids, names, member counts)
-  GET  /api/rooms/{rid}                  room metadata + members (member auth)
-  GET  /api/rooms/{rid}/policy|state|world|events  (member auth; events via ?token=)
+  GET  /api/rooms/{rid}                  room metadata + members + caller_agent_id
+                                         (member auth)
+  GET  /api/rooms/{rid}/invites          owner-only invite lifecycle listing
+                                         (id, label, status, expires_at...; no hashes/tokens)
+  GET  /api/rooms/{rid}/policy|state|world|events  (member auth; events via
+                                         Authorization header or ?token=)
+  POST /api/rooms/{rid}/a2a              room-scoped JSON-RPC (card/get,
+                                         task/send, task/get, task/cancel),
+                                         bound to the bearer caller with the
+                                         same authorization rules as REST
   POST /api/rooms/{rid}/invites          {ttl_seconds?, label?} (owner) -> single-use invite
   POST /api/rooms/{rid}/invites/{iid}/revoke        (owner)
   POST /api/rooms/{rid}/join             {invite_token, name, ...} -> {room, agent, token}
@@ -100,22 +108,49 @@ ALLOWED_HOSTS = [h.strip().lower()
 # invite tokens cannot be brute-forced at line speed.
 JOIN_RATELIMIT = 30
 JOIN_WINDOW = 60.0
-_JOIN_BUCKET = {}
+JOIN_BUCKET_MAX = 4096  # cap on tracked IPs; inactive keys are evicted
+_JOIN_BUCKET = {}       # ip -> {"hits": [ts...], "seen": last_ts}
 _JOIN_LOCK = threading.Lock()
+# Proxy headers (CF-Connecting-IP / X-Forwarded-For) are honored only when
+# the direct TCP peer is an explicitly trusted proxy. A client-supplied
+# header from an untrusted peer never selects the bucket.
+TRUSTED_PROXIES = {h.strip().lower()
+                   for h in os.environ.get("PLAYGROUNDS_TRUSTED_PROXIES", "").split(",")
+                   if h.strip()}
+# Explicitly configured origin allowed to POST besides same-origin
+# http(s)://Host (e.g. the public HTTPS URL served through a tunnel).
+# Compared verbatim; never derived from forwarded headers.
+TRUSTED_ORIGIN = os.environ.get("PLAYGROUNDS_TRUSTED_ORIGIN", "").rstrip("/")
+
+
+def _join_prune_locked(now, cutoff):
+    """Evict inactive bucket keys first; if still over cap, evict the
+    least-recently-seen. Called with _JOIN_LOCK held."""
+    for ip in [ip for ip, rec in _JOIN_BUCKET.items()
+               if rec["seen"] <= cutoff]:
+        del _JOIN_BUCKET[ip]
+    while len(_JOIN_BUCKET) > JOIN_BUCKET_MAX:
+        oldest = min(_JOIN_BUCKET, key=lambda ip: _JOIN_BUCKET[ip]["seen"])
+        del _JOIN_BUCKET[oldest]
 
 
 def _join_ratelimit_ok(ip):
     now = time.time()
     with _JOIN_LOCK:
-        hits = _JOIN_BUCKET.get(ip)
-        if hits is None:
-            hits = _JOIN_BUCKET[ip] = []
         cutoff = now - JOIN_WINDOW
+        rec = _JOIN_BUCKET.get(ip)
+        if rec is None:
+            rec = _JOIN_BUCKET[ip] = {"hits": [], "seen": now}
+        hits = rec["hits"]
         while hits and hits[0] <= cutoff:
             hits.pop(0)
+        rec["seen"] = now
         if len(hits) >= JOIN_RATELIMIT:
+            _join_prune_locked(now, cutoff)
             return False
         hits.append(now)
+        if len(_JOIN_BUCKET) > JOIN_BUCKET_MAX:
+            _join_prune_locked(now, cutoff)
         return True
 MAX_AGENTS = 4  # pilot product limit; not a universal research result
 ROOM_MAX_AGENTS = 64      # room membership cap (matches playground capacity)
@@ -140,6 +175,16 @@ IDEMPOTENCY_TTL = 86400
 
 lock = threading.RLock()
 subscribers = {}  # queue -> room_id (None = lobby)
+sse_owner = {}    # queue -> agent_id (None = lobby / unauthenticated)
+
+# Explicit allowlist for the public /api/state snapshot. server_salt,
+# idempotency records and the rooms registry (private member data and
+# credential hashes) never leave the server through this endpoint.
+PUBLIC_STATE_KEYS = ("schema_version", "policy", "agents", "goals", "tasks",
+                     "plans", "ledger", "ledger_seq", "artifacts",
+                     "reputation", "routing_log", "decisions", "events",
+                     "seq", "context", "agent_stats", "messages", "msg_seq",
+                     "social_seq", "social_messages")
 
 
 def new_id(prefix):
@@ -151,6 +196,7 @@ def utcnow():
 
 _active_room_id = None  # room whose partition is currently swapped in (lock-held)
 _active_caller = None   # bearer-authenticated agent for the current room request
+_saved_lobby_partitions = None  # real lobby partitions while a room_scope is active
 
 
 def blank_room(name):
@@ -190,27 +236,70 @@ def room_scope(room):
     """Swap a room's partitions into the global state dict so every protocol
     helper operates on the room's isolated data. Callers must hold `lock`
     (all request handlers do; it is re-entrant)."""
-    global _active_room_id
+    global _active_room_id, _saved_lobby_partitions
     saved = {k: state[k] for k in ROOM_PARTITION_KEYS}
     prev = _active_room_id
+    prev_saved = _saved_lobby_partitions
     try:
         for k in ROOM_PARTITION_KEYS:
             state[k] = room[k]
         _active_room_id = room["id"]
+        _saved_lobby_partitions = saved
         yield room
     finally:
         for k in ROOM_PARTITION_KEYS:
             room[k] = state[k]
             state[k] = saved[k]
         _active_room_id = prev
+        _saved_lobby_partitions = prev_saved
+
+
+def _public_lobby_state_locked():
+    """Public lobby snapshot. Call with lock held. Explicit allowlist: the
+    rooms registry, server_salt and idempotency records are excluded."""
+    return {k: state[k] for k in PUBLIC_STATE_KEYS if k in state}
+
+
+def _public_room_state_locked(room):
+    """A room's /state: only its own isolated partitions. Credential maps
+    (auth), invite records and the membership roster are not partitions and
+    are never serialized here. Call with lock held."""
+    with room_scope(room):
+        return {k: state[k] for k in ROOM_PARTITION_KEYS}
 
 
 def sweep_expired_invites(room):
-    expired = [iid for iid, inv in room["invites"].items()
-               if not inv["used"] and not inv["revoked"]
-               and inv["expires_at"] < utcnow()]
-    for iid in expired:
-        del room["invites"][iid]
+    """Expired invites are retained with status=expired so the invite UI can
+    show them honestly; only their redemption is refused."""
+    now = utcnow()
+    for inv in room["invites"].values():
+        if not inv["used"] and not inv["revoked"] and inv["expires_at"] < now:
+            inv["expired"] = True
+
+
+def invite_status(inv):
+    """Lifecycle status for the owner-only invite listing. Never expose
+    token hashes or raw tokens."""
+    if inv.get("used"):
+        return "used"
+    if inv.get("revoked"):
+        return "revoked"
+    if inv.get("expired") or inv["expires_at"] < utcnow():
+        return "expired"
+    return "active"
+
+
+def invite_public(inv):
+    """Owner-visible invite metadata: lifecycle fields only, no secrets."""
+    return {"id": inv["id"], "label": inv.get("label", ""),
+            "created_by": inv.get("created_by"),
+            "created_at": inv.get("created_at"),
+            "expires_at": inv.get("expires_at"),
+            "ttl_seconds": inv.get("ttl_seconds"),
+            "used": bool(inv.get("used")), "used_by": inv.get("used_by"),
+            "used_at": inv.get("used_at"),
+            "revoked": bool(inv.get("revoked")),
+            "status": invite_status(inv)}
 
 
 def release_agent_claims(agent_id):
@@ -391,9 +480,25 @@ def migrate_state():
 
 
 def save_state():
+    """Persist the full server state atomically.
+
+    When called inside room_scope() the swapped-in room partitions must not
+    leak into the lobby root on disk: the snapshot is composed from the real
+    lobby partitions plus the live room record (scalar or reassigned room
+    partitions are synced back to the room record first, so the room's own
+    ledger chain on disk matches memory)."""
+    root = state
+    if _active_room_id is not None and _saved_lobby_partitions is not None:
+        room = state.get("rooms", {}).get(_active_room_id)
+        if room is not None:
+            for k in ROOM_PARTITION_KEYS:
+                room[k] = state[k]
+        root = dict(state)
+        for k in ROOM_PARTITION_KEYS:
+            root[k] = _saved_lobby_partitions[k]
     tmp = STATE_PATH + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(state, f)
+        json.dump(root, f)
     os.replace(tmp, STATE_PATH)
 
 
@@ -417,6 +522,21 @@ def emit(etype, data):
             except queue.Full:
                 del subscribers[sub]  # client reconnects and obtains current state
     return ev
+
+
+def _close_room_streams(rid, agent_id=None):
+    """Drop SSE subscriptions for a room (optionally one agent): purge any
+    queued private payloads so a removed member's stream carries nothing
+    further. Call with lock held."""
+    for sub in [s for s, r in subscribers.items()
+                if r == rid and (agent_id is None or sse_owner.get(s) == agent_id)]:
+        while True:
+            try:
+                sub.get_nowait()
+            except queue.Empty:
+                break
+        subscribers.pop(sub, None)
+        sse_owner.pop(sub, None)
 
 
 GENESIS_HASH = "genesis:" + hashlib.sha256(b"playgrounds-v02-ledger").hexdigest()[:32]
@@ -1482,27 +1602,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def _operator_ok(self):
         """Public-mode gate. When PLAYGROUNDS_OPERATOR_TOKEN is unset everything
-        stays open (loopback pilot). When set, the dashboard, the lobby API and
-        room creation require it (Authorization: Bearer header, or ?token= on
-        GETs for browser convenience). Room joins use invite tokens and room
-        calls use room bearer tokens, so they are unaffected."""
+        stays open (loopback pilot). When set, the lobby API, the room
+        directory and room creation require it as an Authorization: Bearer
+        header. Credentials never travel in URLs: query tokens are not
+        accepted. Invite joins and room bearer calls are unaffected."""
         want = os.environ.get("PLAYGROUNDS_OPERATOR_TOKEN", "")
         if not want:
             return True
         auth = self.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].strip(), want):
+        return (auth.startswith("Bearer ")
+                and hmac.compare_digest(auth[len("Bearer "):].strip(), want))
+
+    def _origin_ok(self):
+        """Same-origin writes are allowed over http and https. Anything else
+        must match the explicitly configured PLAYGROUNDS_TRUSTED_ORIGIN
+        verbatim — never a forwarded header."""
+        origin = self.headers.get("Origin")
+        if not origin:
             return True
-        if self.command == "GET":
-            qs = parse_qs(urlparse(self.path).query)
-            if any(hmac.compare_digest(t, want) for t in qs.get("token", [])):
-                return True
-        return False
+        host = self.headers.get("Host", "")
+        if origin == "http://" + host or origin == "https://" + host:
+            return True
+        return bool(TRUSTED_ORIGIN) and origin == TRUSTED_ORIGIN
 
     def do_POST(self):
         if not self._allowed_host():
             return self._send(403, {"error": "loopback Host required"})
-        origin = self.headers.get("Origin")
-        if origin and origin != "http://" + self.headers.get("Host", ""):
+        if not self._origin_ok():
             return self._send(403, {"error": "cross-origin writes forbidden"})
         try:
             if self.headers.get_content_type() != "application/json":
@@ -1539,10 +1665,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
-        # Static assets carry no sensitive data and the dashboard needs them
-        # alongside its gated ?token= page load.
-        public_asset = (parsed.path.startswith("/avatars/") or
-                        parsed.path.startswith("/assets/"))
+        # The dashboard shell is static and carries no secrets: invited
+        # non-operators must be able to open the join UI without an operator
+        # key. Static assets are likewise public. Everything data-bearing
+        # stays behind the operator gate.
+        public_asset = (parsed.path == "/"
+                        or parsed.path.startswith("/avatars/")
+                        or parsed.path.startswith("/assets/"))
         if not public_asset and not self._operator_ok():
             return self._send(403, {"error": "operator token required"})
         self._dispatch_get(parts, parsed)
@@ -1571,7 +1700,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/javascript; charset=utf-8")
             elif parsed.path == "/api/state":
                 with lock:
-                    self._send(200, {k: v for k, v in state.items() if k not in ("server_salt", "idempotency")})
+                    self._send(200, _public_lobby_state_locked())
             elif parsed.path == "/api/world":
                 with lock:
                     self._send(200, world.snapshot(state))
@@ -1603,6 +1732,7 @@ class Handler(BaseHTTPRequestHandler):
                     with lock:
                         replay = [ev for ev in state["events"] if ev["seq"] > since]
                         subscribers[sub] = None
+                        sse_owner[sub] = None
                     self.connection.settimeout(20)
                     for ev in replay:
                         self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
@@ -1613,6 +1743,13 @@ class Handler(BaseHTTPRequestHandler):
                         except queue.Empty:
                             with lock:
                                 if sub not in subscribers:
+                                    # Evicted (queue-full or revoked): the
+                                    # handler sends "Connection: keep-alive",
+                                    # which flips close_connection off in
+                                    # CPython's send_header. Force the socket
+                                    # closed so the client gets EOF and
+                                    # reconnects for current state.
+                                    self.close_connection = True
                                     break
                             payload = b": ping\n\n"
                         self.wfile.write(payload)
@@ -1622,6 +1759,7 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     with lock:
                         subscribers.pop(sub, None)
+                        sse_owner.pop(sub, None)
             elif parsed.path == "/api/messages":
                 qs = parse_qs(parsed.query)
                 since = int(qs.get("since", [0])[0])
@@ -2115,10 +2253,13 @@ class Handler(BaseHTTPRequestHandler):
         agent_id = room["auth"].get(token_hash(token))
         return agent_id if agent_id in room["members"] else None
 
-    def _room_public(self, room):
+    def _room_public(self, room, caller=None):
+        """Directory-safe room metadata. caller_agent_id is the
+        bearer-authenticated caller (already sanitized: an agent id string)."""
         return {"id": room["id"], "name": room["name"],
                 "created_at": room["created_at"],
                 "owner_agent_id": room["owner_agent_id"],
+                "caller_agent_id": caller,
                 "members": [{"agent_id": aid,
                              "name": room["agents"].get(aid, {}).get("name", aid),
                              "role": m["role"], "joined_at": m["joined_at"]}
@@ -2166,15 +2307,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(401, {"error": "room bearer token required"})
                 return True
             if rest == []:
-                self._send(200, self._room_public(room))
+                self._send(200, self._room_public(room, caller))
                 return True
             if rest == ["policy"]:
                 self._send(200, self._room_policy(room))
                 return True
+            if rest == ["invites"]:
+                # Owner-only invite lifecycle listing: metadata only, never
+                # token hashes or raw tokens.
+                if room["members"].get(caller, {}).get("role") != "owner":
+                    self._send(403, {"error": "only the room owner can list invites"})
+                    return True
+                sweep_expired_invites(room)
+                self._send(200, {"room_id": rid,
+                                 "invites": [invite_public(inv)
+                                             for inv in room["invites"].values()]})
+                return True
             if rest == ["state"]:
-                with room_scope(room):
-                    out = {k: v for k, v in state.items()
-                           if k not in ("server_salt", "idempotency", "auth")}
+                out = _public_room_state_locked(room)
                 self._send(200, out)
                 return True
             if rest == ["world"]:
@@ -2197,16 +2347,57 @@ class Handler(BaseHTTPRequestHandler):
                 _active_caller = None
         return True
 
+    def _room_stream_valid(self, rid, token, agent_id, sub):
+        """Revalidate a room SSE subscription: the room must exist, the agent
+        must still be a member, and the bearer token must still map to them.
+        Call with or without lock (takes it itself)."""
+        with lock:
+            if sub not in subscribers:
+                return False
+            room = state["rooms"].get(rid)
+            if room is None:
+                return False
+            if agent_id not in room.get("members", {}):
+                return False
+            if room["auth"].get(token_hash(token)) != agent_id:
+                return False
+            return True
+
+    def _room_stream_close(self, sub):
+        """Close a room SSE stream and purge any queued private payloads.
+
+        Also force close_connection: the handler sends
+        "Connection: keep-alive" (which flips close_connection off in
+        CPython's send_header), so without this the server would park the
+        socket waiting for a next request instead of delivering EOF."""
+        with lock:
+            while True:
+                try:
+                    sub.get_nowait()
+                except queue.Empty:
+                    break
+            subscribers.pop(sub, None)
+            sse_owner.pop(sub, None)
+        self.close_connection = True
+
     def _room_sse(self, rid, parsed):
-        """Room-scoped server-sent events. EventSource cannot send Authorization
-        headers, so the bearer token travels as ?token= (requires TLS when the
-        server is ever exposed beyond loopback)."""
+        """Room-scoped server-sent events. The bearer token travels in the
+        Authorization header (fetch streaming); native EventSource clients
+        that cannot set headers may use ?token= instead (requires TLS when the
+        server is ever exposed beyond loopback). Membership is revalidated
+        before replay, on every delivery and on idle; revoked or deleted
+        streams are closed with their queued payloads purged."""
         qs = parse_qs(parsed.query)
         try:
             since = int(qs.get("since", [0])[0])
         except (ValueError, TypeError):
             since = 0
-        token = qs.get("token", [None])[0]
+        token = None
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[len("Bearer "):].strip() or None
+        if not token:
+            token = qs.get("token", [None])[0]
         sub = queue.Queue(maxsize=256)
         with lock:
             room = state["rooms"].get(rid)
@@ -2218,6 +2409,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(401, {"error": "room bearer token required"})
                 return True
             subscribers[sub] = rid
+            sse_owner[sub] = agent_id
             replay = [ev for ev in room["events"] if ev["seq"] > since]
         try:
             self.send_response(200)
@@ -2227,14 +2419,23 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.connection.settimeout(20)
             for ev in replay:
+                if not self._room_stream_valid(rid, token, agent_id, sub):
+                    self._room_stream_close(sub)
+                    return True
                 self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
             self.wfile.flush()
             while True:
+                if not self._room_stream_valid(rid, token, agent_id, sub):
+                    self._room_stream_close(sub)
+                    return True
                 try:
                     payload = sub.get(timeout=15)
                 except queue.Empty:
                     with lock:
                         if sub not in subscribers:
+                            # Same keep-alive trap as _room_stream_close:
+                            # force the socket closed so the client sees EOF.
+                            self.close_connection = True
                             break
                     payload = b": ping\n\n"
                 self.wfile.write(payload)
@@ -2244,6 +2445,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             with lock:
                 subscribers.pop(sub, None)
+                sse_owner.pop(sub, None)
         return True
 
     def _room_route_post(self, parts, body):
@@ -2270,6 +2472,11 @@ class Handler(BaseHTTPRequestHandler):
         caller = self._room_bearer(room)
         if caller is None:
             self._send(401, {"error": "room bearer token required"})
+            return True
+        if rest == ["a2a"]:
+            # Room-scoped JSON-RPC with the bearer caller bound to every
+            # nested operation (same authorization rules as REST).
+            self._room_a2a(room, caller, body)
             return True
         if rest == ["invites"]:
             self._room_invite_create(room, caller, body)
@@ -2376,7 +2583,7 @@ class Handler(BaseHTTPRequestHandler):
             ledger_append("room_created", {"name": room["name"]}, actor=aid)
             save_state()
         emit("room_created", {"room_id": room["id"], "name": room["name"]})
-        return self._send(200, {"room": self._room_public(room),
+        return self._send(200, {"room": self._room_public(room, aid),
                                 "agent": agent, "token": token})
 
     def _room_invite_create(self, room, caller, body):
@@ -2415,13 +2622,24 @@ class Handler(BaseHTTPRequestHandler):
                                 "join": join_block,
                                 "expires_at": inv["expires_at"]})
 
+    def _join_client_ip(self):
+        """Client IP for join rate limiting. Proxy headers are honored only
+        when the direct TCP peer is an explicitly trusted proxy
+        (PLAYGROUNDS_TRUSTED_PROXIES); otherwise the peer address is used so
+        a spoofed X-Forwarded-For cannot mint fresh buckets."""
+        peer = self.client_address[0]
+        if peer.lower() in TRUSTED_PROXIES:
+            fwd = self.headers.get("CF-Connecting-IP") or ""
+            if not fwd:
+                fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if fwd:
+                return fwd
+        return peer
+
     def _join_limited(self):
         """Anti-bruteforce budget for room joins. Only failed guesses consume
         it, so legitimate joins (up to the 64-member cap) are never throttled."""
-        fwd = self.headers.get("CF-Connecting-IP") or ""
-        if not fwd:
-            fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        return not _join_ratelimit_ok(fwd or self.client_address[0])
+        return not _join_ratelimit_ok(self._join_client_ip())
 
     def _room_join(self, room, body):
         token = body.get("invite_token")
@@ -2467,10 +2685,12 @@ class Handler(BaseHTTPRequestHandler):
         with room_scope(room):
             ledger_append("member_joined", {"name": agent["name"],
                                            "invite_id": inv["id"]}, actor=aid)
+            # Membership events are emitted INSIDE the scope so only room
+            # subscribers receive member names/ids — never the lobby.
+            emit("member_joined", {"room_id": room["id"], "agent_id": aid,
+                                   "name": agent["name"]})
             save_state()
-        emit("member_joined", {"room_id": room["id"], "agent_id": aid,
-                               "name": agent["name"]})
-        return self._send(200, {"room": self._room_public(room),
+        return self._send(200, {"room": self._room_public(room, aid),
                                 "agent": agent, "token": bt})
 
     def _room_invite_revoke(self, room, caller, invite_id):
@@ -2501,8 +2721,13 @@ class Handler(BaseHTTPRequestHandler):
                           {"agent_id": target_id,
                            "name": (agent or {}).get("name"),
                            "claims_released": released}, actor=caller)
+            # Inside the scope: room subscribers are notified, the lobby is not.
+            emit("member_removed", {"room_id": room["id"],
+                                    "agent_id": target_id})
             save_state()
-        emit("member_removed", {"room_id": room["id"], "agent_id": target_id})
+        # Close the removed member's live streams and purge queued payloads.
+        with lock:
+            _close_room_streams(room["id"], target_id)
         return released
 
     def _room_member_remove(self, room, caller, target_id):
@@ -2530,9 +2755,73 @@ class Handler(BaseHTTPRequestHandler):
         if room["members"].get(caller, {}).get("role") != "owner":
             return self._send(403, {"error": "only the room owner can delete the room"})
         rid = room["id"]
-        del state["rooms"][rid]
-        save_state()
+        with lock:
+            _close_room_streams(rid)
+            del state["rooms"][rid]
+            save_state()
         return self._send(200, {"ok": True, "room_id": rid})
+
+
+    def _room_a2a(self, room, caller, body):
+        """Room-scoped A2A JSON-RPC. Every nested operation is bound to the
+        bearer-authenticated caller, with the same authorization rules as the
+        REST protocol: task/send records the caller as actor, task/cancel
+        enforces the claiming-agent-or-owner rule (no by="a2a" bypass)."""
+        mid = body.get("id")
+        method = body.get("method", "")
+        params = body.get("params", {}) or {}
+
+        def ok(result):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "result": result})
+
+        def err(code, message):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "error": {"code": code, "message": message}})
+
+        is_owner = room["members"].get(caller, {}).get("role") == "owner"
+        if method == "card/get":
+            with room_scope(room):
+                card = playground_card()
+            card["room_id"] = room["id"]
+            return ok(card)
+        if method == "task/send":
+            gid = params.get("goal_id")
+            if not gid:
+                return err(-32602, "goal_id required")
+            with room_scope(room):
+                task, e = create_task(gid, params, actor=caller)
+            if e:
+                return err(-32000, e["error"])
+            return ok({"task_id": task["id"], "status": task["status"],
+                       "topology": task.get("topology")})
+        if method == "task/get":
+            tid = params.get("task_id")
+            with room_scope(room):
+                task = state["tasks"].get(tid)
+                if not task:
+                    return err(-32000, "unknown task")
+                arts = [state["artifacts"][a]
+                        for a in task.get("artifact_ids", [])
+                        if a in state["artifacts"]]
+                task = dict(task)
+            return ok({"task": task, "artifacts": arts})
+        if method == "task/cancel":
+            tid = params.get("task_id")
+            with room_scope(room):
+                task = state["tasks"].get(tid)
+                if not task:
+                    return err(-32000, "unknown task")
+                holder = task.get("agent_id")
+                if holder not in (None, caller) and not is_owner:
+                    return err(-32001, "only the claiming agent or the room "
+                                       "owner can cancel")
+                t = cancel_task(tid, by=caller,
+                                reason=params.get("reason", "a2a cancel"))
+            if not t:
+                return err(-32000, "unknown or terminal task")
+            return ok({"task_id": t["id"], "status": t["status"]})
+        return err(-32601, f"method not found: {method}")
 
 
     def _handle_a2a(self, body):

@@ -106,6 +106,7 @@
   <h1>🎮 Playgrounds <span style="font-size:16px;color:var(--dim);font-weight:400">Study Hall + Playground · local pilot</span></h1>
   <p id="goalTitle">loading…</p>
   <p id="ledgerLine" style="font-size:12px"></p>
+  <p style="font-size:12px"><label>Operator key <input type="password" id="opKey" autocomplete="off" placeholder="required on public servers" style="width:16em"></label> <span style="color:var(--dim)">kept in memory only, never in the URL</span></p>
 </header>
 <main>
 <p><strong id="connection" aria-live="polite">Connecting…</strong> · Local pilot; agent identities are not authenticated.</p>
@@ -136,17 +137,22 @@
   <section><h2>Live event log</h2><div id="log"></div></section>
 </div></main>
 <script>
-// Public deployments: when the page is opened with ?token=<operator token>,
-// propagate it to API fetches so the gated dashboard keeps working.
-const _opToken = new URLSearchParams(location.search).get('token');
-if (_opToken) {
-  const _fetch = window.fetch.bind(window);
-  window.fetch = (url, opts) => {
-    if (typeof url === 'string' && url.startsWith('/api/')) {
-      url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(_opToken);
-    }
-    return _fetch(url, opts);
-  };
+// Operator transport (public deployments): the operator key lives in memory
+// only — never in the URL, never in storage. Set it via the key field in
+// the header or window.setOperatorToken(). It travels as an Authorization
+// header on every API call, including the fetch-streamed event feed.
+let _opToken = null;
+function setOperatorToken(t) {
+  _opToken = (typeof t === 'string' && t) ? t : null;
+}
+function authedFetch(url, opts) {
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers || {});
+  if (_opToken && typeof url === 'string' && url.startsWith('/api/')) {
+    headers['Authorization'] = 'Bearer ' + _opToken;
+  }
+  opts.headers = headers;
+  return fetch(url, opts);
 }
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function avatarHtml(a, size) {
@@ -181,9 +187,9 @@ async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-  const r = await fetch('/api/state'); if (!r.ok) throw new Error('HTTP ' + r.status); const s = await r.json();
+  const r = await authedFetch('/api/state'); if (!r.ok) throw new Error('HTTP ' + r.status); const s = await r.json();
   document.getElementById('connection').textContent = window.PLAYGROUNDS_SNAPSHOT ? 'OFFLINE SNAPSHOT — not a live agent connection' : 'LIVE — connected to PlayGrounds';
-  const worldResponse = await fetch('/api/world');
+  const worldResponse = await authedFetch('/api/world');
   if (!worldResponse.ok) throw new Error('World HTTP ' + worldResponse.status);
   renderWorld(await worldResponse.json(), s);
   const goals = Object.values(s.goals);
@@ -196,7 +202,7 @@ async function refresh() {
     ? `🎯 ${gl.title} — 💰 ${gl.budget_available ?? gl.budget}/${gl.budget} credits available`
     : 'No goal yet';
   try {
-    const lr = await fetch('/api/ledger?since=0'); const ld = await lr.json();
+    const lr = await authedFetch('/api/ledger?since=0'); const ld = await lr.json();
     document.getElementById('ledgerLine').textContent =
       `ledger ${ld.events.length} events · digest ${(ld.digest || '').slice(0, 24)}… · hash-chained`;
   } catch (e) { /* ledger panel optional */ }
@@ -242,7 +248,7 @@ async function refresh() {
   const g = gl ? gl.id : null;
   let msgHtml = '<p style="color:var(--dim)">No messages yet.</p>';
   if (g) {
-    const mr = await fetch('/api/messages?goal_id=' + g);
+    const mr = await authedFetch('/api/messages?goal_id=' + g);
     const md = await mr.json();
     const items = md.messages.slice(-15).reverse().map(m => {
       const snd = s.agents[m.from_agent];
@@ -261,7 +267,7 @@ async function refresh() {
 async function verify(tid, approved) {
   const verifier_agent_id = document.getElementById('reviewer-' + tid).value;
   if (!verifier_agent_id) { alert('Select an independent reviewer first. Human approval is not available.'); return; }
-  const response = await fetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved, verifier_agent_id})});
+  const response = await authedFetch('/api/tasks/' + tid + '/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved, verifier_agent_id})});
   if (!response.ok) { alert('Review failed: ' + (await response.text())); return; }
   refresh();
 }
@@ -303,10 +309,52 @@ function renderWorld(world, state) {
   document.getElementById('socialFeed').innerHTML = world.social_messages.slice(-40).map(m => `<div class="social-line"><b>${escapeHtml(names.get(m.agent_id) || 'Unknown agent')}</b> · ${escapeHtml(m.text)}</div>`).join('') || 'No conversation yet. Connected agents can opt in and post small talk; nothing is simulated.';
 }
 
+async function startEventStream() {
+  // Header-auth event stream via fetch streaming (EventSource cannot send
+  // headers): the operator key travels in an Authorization header, never
+  // the URL. Reconnects on drop; backs off 3s between attempts.
+  let since = 0;
+  for (;;) {
+    try {
+      const r = await authedFetch('/api/events?since=' + since, {headers: {'Accept': 'text/event-stream'}});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, {stream: true});
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of block.split('\n')) {
+            if (line.startsWith('data: ')) {
+              try {
+                const ev = JSON.parse(line.slice(6));
+                if (ev.seq > since) since = ev.seq;
+              } catch (ignore) {}
+              refresh();
+            }
+          }
+        }
+      }
+    } catch (e) {
+      document.getElementById('connection').textContent = 'RECONNECTING — last known presence shown';
+    }
+    await new Promise(function (res) { setTimeout(res, 3000); });
+  }
+}
+
 refresh();
-const es = new EventSource('/api/events?since=0' + (_opToken ? '&token=' + encodeURIComponent(_opToken) : ''));
-es.onmessage = () => refresh();
-es.onerror = () => { document.getElementById("connection").textContent = "RECONNECTING — last known presence shown"; };
+const es = startEventStream();
+// Operator key entry (public deployments): masked input, memory-only,
+// never in the URL and never persisted.
+var _opKeyInput = document.getElementById('opKey');
+if (_opKeyInput && _opKeyInput.addEventListener) {
+  _opKeyInput.addEventListener('input', function (e) { setOperatorToken(e.target.value); });
+}
 setInterval(refresh, 10000);
 </script>
 <script type="module">
