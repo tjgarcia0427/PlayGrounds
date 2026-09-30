@@ -68,6 +68,7 @@ try {
   await page.locator('#dialogTitle').evaluate(e=>{const p=document.createElement('p');p.textContent='Synthetic UI fixture — not a live invitation';document.getElementById('dialogContent').prepend(p)});
   await page.screenshot({path:join(output,'ui-invites-desktop.png')});await page.click('#dialogCancel');
   await page.selectOption('#roomSelect','room_beta');await page.fill('#roomKey','bad');await page.click('#dialogSubmit');
+  await page.waitForFunction(()=>document.getElementById('dialogError').textContent.includes('could not connect'));
   assert.match(await page.textContent('#dialogError'),/could not connect/);
   await page.fill('#roomKey','QA_member_key');await page.click('#dialogSubmit');
   await page.waitForFunction(()=>document.getElementById('goalTitle').textContent.includes('Beta focus'));
