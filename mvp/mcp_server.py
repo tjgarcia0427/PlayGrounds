@@ -36,7 +36,9 @@ __version__ = "0.2.0"
 
 
 def redact(text):
-    return text.replace(TOKEN, "[redacted]") if TOKEN else text
+    if not TOKEN:
+        return text
+    return text.replace(json.dumps(TOKEN)[1:-1], "[redacted]").replace(TOKEN, "[redacted]")
 
 
 def log(*a):
@@ -58,7 +60,7 @@ def target(path):
             or origin.username is not None or origin.password is not None
             or origin.path not in ("", "/") or origin.query or origin.fragment):
         raise RuntimeError("PLAYGROUNDS_BASE must be an origin without credentials, path or query")
-    if TOKEN and ("\r" in TOKEN or "\n" in TOKEN):
+    if TOKEN and (not TOKEN.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in TOKEN)):
         raise RuntimeError("Invalid bearer configuration")
     if TOKEN and origin.scheme != "https" and origin.hostname not in ("127.0.0.1", "::1", "localhost"):
         raise RuntimeError("Remote bearer credentials require HTTPS")

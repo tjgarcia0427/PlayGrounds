@@ -47,6 +47,7 @@ class Transport(unittest.TestCase):
         self.assertNotIn(mcp.TOKEN,str(raised.exception))
     def test_success_response_cannot_echo_bearer(self):
         Handler.echo=True
+        mcp.TOKEN='synthetic-"quoted"-key'
         reply=mcp.handle({'id':1,'method':'tools/call','params':{'name':'playgrounds_world'}})
         self.assertNotIn(mcp.TOKEN,json.dumps(reply))
         self.assertIn('[redacted]',json.dumps(reply))
