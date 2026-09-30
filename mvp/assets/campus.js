@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import {hashId,spot,visualActivity,RENDER_LIMIT} from './campus-layout.js';
+import {hashId,spot,visualActivity,RENDER_LIMIT,CAMPUS,ANNEX_PROPS} from './campus-layout.js';
 
 import {createNavigator,DESK} from './campus-navigation.js';
 import {InteractionDirector,routeLength,walkSpatial,SLIDE_CURVE,blinkAmount} from './campus-interactions.js';
@@ -24,7 +24,7 @@ function buildCampus() {
   scene.background=new THREE.Color('#f4dfd5');
   scene.fog=new THREE.Fog('#f4dfd5',45,85);
   const camera=new THREE.OrthographicCamera(-18,18,12,-12,.1,120);
-  let orbit=.3, zoom=1, focus=-6.8, room="playground", viewAspect=1, targetExtent=12, currentExtent=12;
+  let orbit=.3, zoom=1, focus=-CAMPUS.roomCenter, room="playground", viewAspect=1, targetExtent=12, currentExtent=12;
   const follow=document.getElementById("followAgent");
   renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
   renderer.outputColorSpace=THREE.SRGBColorSpace;
@@ -39,7 +39,7 @@ function buildCampus() {
   const sun=new THREE.DirectionalLight('#fff0cf',2.3);
   sun.position.set(-10,22,14);sun.castShadow=true;
   sun.shadow.mapSize.set(1024,1024);
-  Object.assign(sun.shadow.camera,{left:-20,right:20,top:15,bottom:-15,near:1,far:60});
+  Object.assign(sun.shadow.camera,{left:-25,right:25,top:20,bottom:-20,near:1,far:60});
   sun.shadow.normalBias=.06;scene.add(sun);
   const rim=new THREE.DirectionalLight('#d1d9ff',1.1);rim.position.set(15,10,-12);scene.add(rim);
   const route=createNavigator(),director=new InteractionDirector(route);
@@ -75,25 +75,25 @@ function buildCampus() {
     return sprite;
   }
   // Rounded floating base and two distinct material worlds.
-  box('#c4b5b2',[-6.8,-.9,0],[13.4,1.4,16]);
-  box('#c4b5b2',[6.8,-.9,0],[13.4,1.4,16]);
-  box('#a2cdb2',[-6.8,-.12,0],[13.4,.3,15.5]);
-  box('#eed7b4',[6.8,-.1,0],[13.2,.35,15.5]);
-  box('#edbfa9',[0,.08,5.8],[26,.12,1.1]);
+  box('#c4b5b2',[-CAMPUS.roomCenter,-.9,CAMPUS.centerZ],[CAMPUS.width,1.4,CAMPUS.depth]);
+  box('#c4b5b2',[CAMPUS.roomCenter,-.9,CAMPUS.centerZ],[CAMPUS.width,1.4,CAMPUS.depth]);
+  box('#a2cdb2',[-CAMPUS.roomCenter,-.12,CAMPUS.centerZ],[CAMPUS.width,.3,CAMPUS.depth-.5]);
+  box('#eed7b4',[CAMPUS.roomCenter,-.1,CAMPUS.centerZ],[CAMPUS.width-.2,.35,CAMPUS.depth-.5]);
+  box('#edbfa9',[0,.08,5.8],[34,.12,1.1]);
   for(let i=0;i<10;i++) disc('#f7e8d3',[-1+.15*Math.sin(i),.1,-6+i*1.2],[.5,.1,.4]);
   // Study hall: dollhouse cutaway, cream walls, big blue windows, pink trim.
-  box('#f4e5cb',[6.8,2.15,-6.7],[12.6,4.4,.25]);
+  box('#f4e5cb',[8.8,2.15,-6.7],[16.6,4.4,.25]);
   // Low plinth plus airy glass keeps the cutaway room readable from outside.
-  box('#e8d2d7',[13,.5,-1.2],[.24,1,11.3]);
+  box('#e8d2d7',[17,.5,-1.2],[.24,1,11.3]);
   const glass=new THREE.MeshStandardMaterial({color:'#c4e1dc',transparent:true,opacity:.2,roughness:.2,depthWrite:false});
   for(const z of [-4.9,-1.3,2.3]) {
-    const pane=new THREE.Mesh(cube,glass);pane.position.set(13,2.65,z);pane.scale.set(.1,3.3,3.4);scene.add(pane);
-    box('#ead9c3',[13,2.65,z-1.7],[.14,3.6,.14]);
+    const pane=new THREE.Mesh(cube,glass);pane.position.set(17,2.65,z);pane.scale.set(.1,3.3,3.4);scene.add(pane);
+    box('#ead9c3',[17,2.65,z-1.7],[.14,3.6,.14]);
   }
   // A wood-slat skylight/pergola hints at a modern campus without hiding the agents.
-  for(let i=0;i<11;i++)box('#c99f7c',[1.6+i*1.07,4.5,-5.6],[.13,.18,2.4]);
-  box('#d6a29f',[6.8,4.45,-6.7],[13,.24,.6]);
-  box('#d6a29f',[13,4.45,-1.2],[.6,.24,11.5]);
+  for(let i=0;i<15;i++)box('#c99f7c',[1.6+i*1.07,4.5,-5.6],[.13,.18,2.4]);
+  box('#d6a29f',[6.8,4.45,-6.7],[17,.24,.6]);
+  box('#d6a29f',[17,4.45,-1.2],[.6,.24,11.5]);
   for(const x of [3,11]) {
     box('#eed3a7',[x,2.65,-6.5],[2.75,2.55,.15]);
     box('#b7dce0',[x,2.65,-6.37],[2.4,2.15,.12]);
@@ -201,6 +201,39 @@ function buildCampus() {
     ball(['#efb9bd','#f4dc8d','#cfb8df'][i%3],[x,.5,z],[.14,.14,.14]);
     ball('#fff1bf',[x,.54,z+.09],[.055,.055,.04]);
   }
+  // New side wings: a garden promenade and a quiet reading lounge. These are
+  // real floor extensions, not enlarged toys. Furniture footprints share nav data.
+  box('#d5ddbd',[-14.3,.06,1.5],[1,.07,14.5]);
+  box('#e7cbbb',[14.35,.13,1.2],[3.9,.07,9.8]);
+  for(const p of ANNEX_PROPS) {
+    if(p.kind==='planter') {
+      box('#ead2bb',[p.x,.3,p.z],[p.w,.5,p.d]);
+      box('#a5b990',[p.x,.56,p.z],[p.w-.16,.04,p.d-.16]);
+      for(let i=0;i<3;i++)ball(['#94bcab','#afc9a4','#c1cca6'][i],
+        [p.x+(i-1)*.34,1.05+(i%2)*.3,p.z],[.43,.65,.43]);
+    } else if(p.kind==='bench'||p.kind==='sofa') {
+      const sofa=p.kind==='sofa',color=sofa?'#d3bed7':'#c9a27e';
+      box(color,[p.x,.48,p.z],[p.w,.55,p.d]);
+      box(color,[p.x+(sofa?.57:-.45),.95,p.z],[.25,1.1,p.d]);
+      for(const dz of [-1,0,1])ball(sofa?'#f0d4bd':'#bdd0b0',
+        [p.x,.83,p.z+dz],[.5,.18,.43]);
+    } else {
+      disc('#d2ad89',[p.x,.52,p.z],[.75,.15,.75]);
+      disc('#b9987c',[p.x,.25,p.z],[.18,.5,.18]);
+      box('#9bbfba',[p.x-.12,.62,p.z],[.5,.045,.37]);
+      disc('#fff0d9',[p.x+.3,.7,p.z],[.1,.19,.1]);
+    }
+  }
+  // A shallow front terrace stays clear for future shared activities.
+  for(const x of [-9,-5,5,9])disc(x<0?'#c0d8b5':'#e8cdb6',[x,.12,9],[1.35,.06,.7]);
+  // Garden edging and warm, low bollards frame rather than obscure the room.
+  for(const x of [-16.5,-12,-8,-4,4,8,12,16.5]) {
+    disc('#c5ad95',[x,.36,10.3],[.085,.65,.085]);
+    ball('#fff0c9',[x,.73,10.3],[.16,.18,.16]);
+  }
+  tree(-15.5,-4.8,.65);
+  label('GARDEN WALK',-14.9,2.8,4.6,2.5);
+  label('READ & RECHARGE',14.4,3.1,-4.8,3);
   // Gate and pennants connect the two spaces; the travel path uses this opening.
   for(const z of [4.95,6.65])disc('#f7e4ce',[0,1,z],[.11,2,.11]);
   box('#cfaaa7',[0,2,5.8],[.2,.16,1.9]);
@@ -290,7 +323,7 @@ function buildCampus() {
   function resize() {
     const width=host.clientWidth || 900,height=Math.min(620,Math.max(360,width*.6));
     renderer.setSize(width,height);const aspect=width/height;
-    viewAspect=aspect;targetExtent=room==='campus'?Math.max(12,19/aspect):Math.max(9,10/aspect);
+    viewAspect=aspect;targetExtent=room==='campus'?Math.max(14,24/aspect):Math.max(11,13/aspect);
   }
   function setView() {
     const active=mode.value==='3d';host.hidden=!active;fallback.hidden=active;
@@ -301,7 +334,7 @@ function buildCampus() {
   document.getElementById('cameraRight').addEventListener('click',()=>{orbit+=.16});
   function setRoom(next) {
     if(room===next)return;
-    room=next;focus=room==='classroom'?6.8:room==='playground'?-6.8:0;
+    room=next;focus=room==='classroom'?CAMPUS.roomCenter:room==='playground'?-CAMPUS.roomCenter:0;
     document.getElementById('classTab').setAttribute('aria-pressed',String(room==='classroom'));
     document.getElementById('playTab').setAttribute('aria-pressed',String(room==='playground'));
     if(room!=='campus') {
@@ -339,13 +372,15 @@ function buildCampus() {
     if(followed)setRoom(followed.path&&followed.crossing?'campus':followed.space);
     for(const {o,side} of sets)o.visible=(room==='campus'||side===room)&&(o.userData.occupied!==false);
     host.dataset.room=room;
+    host.dataset.floorArea=String(CAMPUS.width*CAMPUS.depth);
+    host.dataset.visibleAnnex=room==='campus'?'garden,reading':room==='playground'?'garden':'reading';
     host.dataset.following=follow.value;
     currentExtent=ambientMotion?THREE.MathUtils.damp(currentExtent,targetExtent,6,dt):targetExtent;
     camera.left=-currentExtent*viewAspect;camera.right=currentExtent*viewAspect;camera.top=currentExtent;camera.bottom=-currentExtent;
     camera.zoom=zoom;
     look.x=reduce.matches||!ambientMotion?focus:THREE.MathUtils.lerp(look.x,focus,.12);
-    camera.position.set(look.x+Math.sin(orbit)*32,24,Math.cos(orbit)*32);
-    camera.lookAt(look.x,0,0);camera.updateProjectionMatrix();
+    camera.position.set(look.x+Math.sin(orbit)*32,24,CAMPUS.centerZ+Math.cos(orbit)*32);
+    camera.lookAt(look.x,0,CAMPUS.centerZ);camera.updateProjectionMatrix();
     const interactions=director.tick(dt,[...actors.values()].map(describe),ambientMotion,carousel.rotation.y,document.getElementById('ambientLife').checked);
     for(const a of actors.values()) {
       const activity=visualActivity(a.agent,Date.now()/1000), stale=activity==='stale';
