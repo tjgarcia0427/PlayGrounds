@@ -10,13 +10,13 @@ const chrome=process.env.CHROME_PATH;
 assert.ok(chrome&&existsSync(chrome),'Explicit Google Chrome path required');
 assert.ok(process.env.ROOM_BACKEND_ROOT,'Pinned room backend required');
 const base='http://127.0.0.1:8496', temp=mkdtempSync(join(tmpdir(),'pg-real-ui-'));
-const operator=randomBytes(24).toString('hex'), secrets=[operator], errors=[], urls=[];
+const operator=randomBytes(24).toString('hex'), secrets=[operator], errors=[], urls=[], assetFailures=[];
 const server=spawn('python3',['mvp/browser-qa/room_backend.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8496',PLAYGROUNDS_OPERATOR_TOKEN:operator},stdio:'ignore'});
 let browser;
 const output=resolve('mvp/browser-qa/artifacts');mkdirSync(output,{recursive:true});
 async function api(path,token,body){return fetch(base+path,{method:body?'POST':'GET',signal:AbortSignal.timeout(10000),headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});}
 async function json(path,token,body){const r=await api(path,token,body);assert.ok(r.ok,`API ${path}: ${r.status}`);return r.json();}
-async function label(page){await page.evaluate(()=>{const p=document.createElement('p');p.textContent='QA — synthetic participants on isolated real backend, not live users';p.style.cssText='background:#fff0c9;padding:12px;margin:0';document.body.prepend(p);});}
+async function label(page){await page.evaluate(()=>{const p=document.createElement('p');p.textContent='QA — synthetic participants on isolated real backend, not live users';p.style.cssText='background:#fff0c9;color:#53432d;padding:12px;margin:0';document.body.prepend(p);});}
 async function saved(page){await page.waitForSelector('#newRoomKey');const token=await page.inputValue('#newRoomKey');secrets.push(token);await page.check('#savedKey');await page.click('#dialogSubmit');await page.waitForSelector('#newRoomKey',{state:'detached'});return token;}
 try {
   let ready=false;for(let i=0;i<80;i++){try{if((await fetch(base)).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert.ok(ready,'backend readiness');
@@ -25,7 +25,7 @@ try {
   const ownerContext=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   const memberContext=await browser.newContext({viewport:{width:390,height:844},reducedMotion:'reduce'});
   const owner=await ownerContext.newPage(),member=await memberContext.newPage();
-  for(const p of [owner,member]){p.setDefaultTimeout(15000);p.on('pageerror',e=>errors.push(e.message));p.on('request',r=>urls.push(r.url()));}
+  for(const p of [owner,member]){p.setDefaultTimeout(15000);p.on('pageerror',e=>errors.push(e.message));p.on('request',r=>urls.push(r.url()));p.on('response',r=>{if(new URL(r.url()).pathname.startsWith('/assets/')&&!r.ok())assetFailures.push(new URL(r.url()).pathname+':'+r.status());});}
   console.log('QA stage: open operator shell');await owner.goto(base);await label(owner);
   await owner.click('#operatorConnect');await owner.fill('#operatorKey',operator);await owner.click('#dialogSubmit');
   await owner.waitForSelector('#operatorKey',{state:'detached'});
@@ -71,6 +71,6 @@ try {
   await owner.reload();assert.equal(await owner.evaluate(()=>window.RoomUI.current),null,'reload forgets room');
   for(const p of [owner,member]){const storage=await p.evaluate(()=>JSON.stringify([localStorage,sessionStorage]));for(const secret of secrets)assert.ok(!storage.includes(secret),'no persistent credentials');}
   for(const secret of secrets)assert.ok(urls.every(u=>!u.includes(secret)),'no credentials in URLs');
-  assert.deepEqual(errors,[]);
+  assert.deepEqual(assetFailures,[],'all UI assets must load');assert.deepEqual(errors,[]);
   console.log('Real backend UI: operator/create/join/auth boundaries, one-time keys, isolation, revocation clearing, reload and responsive checks passed; invitation UI:',Boolean(invitationUI));
 }finally{await browser?.close();server.kill('SIGTERM');await new Promise(r=>server.once('exit',r));}
