@@ -144,7 +144,17 @@ state = load_state()
 
 def migrate_state():
     """One-time v0.1 -> v0.2 migration: keep the original JSON as a read-only
-    backup, fill new fields with defaults, emit a ledger event."""
+    backup, fill new fields with defaults, emit a ledger event.
+
+    The games section is additive and idempotent: it is created whenever it
+    is missing, even when the schema version already matches (same-schema
+    v0.2 states predate the mini-games feature, issue #30)."""
+    if "games" not in state or not isinstance(state["games"], dict):
+        state["games"] = {}
+    # Tolerate game dicts persisted by earlier revisions of this branch.
+    for g in state["games"].values():
+        if isinstance(g, dict):
+            g.setdefault("timeout_streak", 0)
     if state.get("schema_version") == SCHEMA_VERSION:
         return
     bak = STATE_PATH + ".v01.bak"
@@ -1346,7 +1356,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, f.read(), "text/javascript; charset=utf-8")
         elif parsed.path == "/api/state":
             with lock:
-                self._send(200, {k: v for k, v in state.items() if k not in ("server_salt", "idempotency")})
+                snap = {k: v for k, v in state.items()
+                        if k not in ("server_salt", "idempotency")}
+                # Sanitize games: current-round moves are never exposed on a
+                # public read surface (see games.public_view).
+                snap["games"] = {
+                    gid: games.public_view(g)
+                    for gid, g in state["games"].items()}
+                self._send(200, snap)
         elif parsed.path == "/api/world":
             with lock:
                 self._send(200, world.snapshot(state))
@@ -1406,17 +1423,18 @@ class Handler(BaseHTTPRequestHandler):
                         if m["seq"] > since and (gid is None or m.get("goal_id") == gid)]
                 self._send(200, {"messages": msgs[-100:]})
         elif parts[:2] == ["api", "games"]:
-            qs = parse_qs(parsed.query)
-            viewer = qs.get("agent_id", [None])[0]
+            # No viewer identity is accepted here: there is no authenticated
+            # agent identity on this branch, so a caller-supplied agent_id
+            # would disclose other players' hidden moves (see games.py).
             with lock:
                 self._sweep_stale_game_rounds()
                 if len(parts) == 2:
                     self._send(200, {"games": [
-                        games.public_view(g, viewer)
+                        games.public_view(g)
                         for g in state["games"].values()]})
                 elif len(parts) == 3 and parts[2] in state["games"]:
                     self._send(200, {"game": games.public_view(
-                        state["games"][parts[2]], viewer)})
+                        state["games"][parts[2]])})
                 else:
                     self._send(404, {"error": "unknown game"})
         elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
@@ -1937,26 +1955,44 @@ class Handler(BaseHTTPRequestHandler):
             emit(ev["type"], {k: v for k, v in ev.items() if k != "type"})
 
     def _sweep_stale_game_rounds(self):
-        """Close rounds left open past ROUND_TIMEOUT (auto-play fills gaps)."""
+        """Close rounds left open past ROUND_TIMEOUT (auto-play fills gaps).
+
+        Lazy progression: there is no background scheduler. This sweep runs
+        on every games API access (GET list/detail and all POST routes), so
+        a round advances only when the API is touched — a game with no API
+        traffic sits unchanged until the next access closes it. Each sweep
+        is guaranteed to make progress (missing moves are auto-filled), and
+        games.MAX_TIMEOUT_ROUNDS bounds total stall time before a game is
+        stalled out and refunded (see games.close_round)."""
         now = utcnow()
+        progressed = False
         for game in state["games"].values():
             if game["status"] != "running":
                 continue
             if now - (game["round_opened_at"] or now) < games.ROUND_TIMEOUT:
                 continue
-            events = games.close_round(game, now)
+            events = games.close_round(game, now, timed_out=True)
+            if not events:
+                continue
+            progressed = True
             for ev in events:
                 if ev["type"] == "game_finished":
                     self._game_credit(ev["champion"], game["pot"],
                                       "game_won", game, "system")
-            ledger_append("game_round_timeout",
-                          {"game_id": game["id"], "round": game["round"]},
-                          actor="system")
+                elif ev["type"] == "game_stalled":
+                    for aid, amt in ev["refunds"]:
+                        self._game_credit(aid, amt, "game_refund",
+                                          game, "system")
+                ledger_append(ev["type"],
+                              {k: v for k, v in ev.items() if k != "type"},
+                              actor="system")
             self._game_emit(events, game)
+        if progressed:
+            save_state()
 
     def _prune_games(self):
         terminal = [g for g in state["games"].values()
-                    if g["status"] in ("finished", "cancelled")]
+                    if g["status"] in ("finished", "cancelled", "stalled")]
         terminal.sort(key=lambda g: g.get("finished_at") or 0)
         for g in terminal[:-50]:
             del state["games"][g["id"]]
@@ -2004,7 +2040,7 @@ class Handler(BaseHTTPRequestHandler):
         emit("game_created", {"game_id": game["id"], "kind": game["kind"],
                               "label": game["label"], "stake": game["stake"],
                               "creator": agent["id"]})
-        return self._send(200, {"game": games.public_view(game, agent["id"])})
+        return self._send(200, {"game": games.public_view(game)})
 
     def _game_join(self, game, body):
         agent, err = self._game_agent(body)
@@ -2020,7 +2056,7 @@ class Handler(BaseHTTPRequestHandler):
         save_state()
         emit("game_joined", {"game_id": game["id"], "agent_id": agent["id"],
                              "players": len(game["players"])})
-        return self._send(200, {"game": games.public_view(game, agent["id"])})
+        return self._send(200, {"game": games.public_view(game)})
 
     def _game_start(self, game, body):
         agent, err = self._game_agent(body)
@@ -2035,7 +2071,7 @@ class Handler(BaseHTTPRequestHandler):
         save_state()
         emit("game_started", {"game_id": game["id"],
                               "players": list(game["players"])})
-        return self._send(200, {"game": games.public_view(game, agent["id"])})
+        return self._send(200, {"game": games.public_view(game)})
 
     def _game_move(self, game, body):
         agent, err = self._game_agent(body)
@@ -2054,7 +2090,7 @@ class Handler(BaseHTTPRequestHandler):
                           actor=agent["id"])
         save_state()
         self._game_emit(events, game)
-        return self._send(200, {"game": games.public_view(game, agent["id"]),
+        return self._send(200, {"game": games.public_view(game),
                                 "events": events})
 
     def _game_cancel(self, game, body):
@@ -2068,7 +2104,7 @@ class Handler(BaseHTTPRequestHandler):
             self._game_credit(aid, amt, "game_refund", game, agent["id"])
         save_state()
         emit("game_cancelled", {"game_id": game["id"], "refunds": len(refunds)})
-        return self._send(200, {"game": games.public_view(game, agent["id"])})
+        return self._send(200, {"game": games.public_view(game)})
 
     # ---------- A2A (minimal JSON-RPC slice) ----------
     def _handle_a2a(self, body):
