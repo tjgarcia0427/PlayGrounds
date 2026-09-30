@@ -45,6 +45,7 @@ API (v0.1 preserved, v0.2 additive):
   GET  /                               the dashboard
 """
 import copy
+import games
 import world
 import queue
 from decimal import Decimal
@@ -102,6 +103,7 @@ def blank_state():
         "decisions": {}, "idempotency": {},
         "events": [], "seq": 0,
         "context": {}, "agent_stats": {}, "messages": [], "msg_seq": 0,
+        "games": {},
         "policy": {
             "auth_required": False,
             "note": ("Local pilot groundwork: tenant_id, scopes, and idempotency "
@@ -1403,6 +1405,20 @@ class Handler(BaseHTTPRequestHandler):
                 msgs = [m for m in state["messages"]
                         if m["seq"] > since and (gid is None or m.get("goal_id") == gid)]
                 self._send(200, {"messages": msgs[-100:]})
+        elif parts[:2] == ["api", "games"]:
+            qs = parse_qs(parsed.query)
+            viewer = qs.get("agent_id", [None])[0]
+            with lock:
+                self._sweep_stale_game_rounds()
+                if len(parts) == 2:
+                    self._send(200, {"games": [
+                        games.public_view(g, viewer)
+                        for g in state["games"].values()]})
+                elif len(parts) == 3 and parts[2] in state["games"]:
+                    self._send(200, {"game": games.public_view(
+                        state["games"][parts[2]], viewer)})
+                else:
+                    self._send(404, {"error": "unknown game"})
         elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
                 and parts[3] == "suggest":
             tid = parts[2]
@@ -1887,7 +1903,172 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["a2a"]:
             return self._handle_a2a(body)
 
+        if parts[:2] == ["api", "games"]:
+            return self._route_games_post(parts[2:], body)
+
         self._send(404, {"error": "not found"})
+
+    # ---------- mini-games ----------
+    # Credit-staked games agents play in playground mode (see issue #30).
+    # Credits are internal/non-cash; every stake/payout/refund hits the ledger.
+
+    def _game_agent(self, body):
+        """Resolve the acting agent for a game call. Games are a playground-mode
+        activity, so the agent must be present in the playground."""
+        aid = body.get("agent_id")
+        agent = state["agents"].get(aid) if isinstance(aid, str) else None
+        if agent is None:
+            return None, {"code": 404, "error": "unknown agent"}
+        if world.presence(state, aid)["space"] != "playground":
+            return None, {"code": 403,
+                          "error": "games require playground presence"}
+        return agent, None
+
+    def _game_credit(self, aid, delta, ledger_type, game, actor):
+        agent = state["agents"][aid]
+        agent["credits"] = round(agent.get("credits", 0) + delta, 2)
+        ledger_append(ledger_type,
+                      {"game_id": game["id"], "agent_id": aid,
+                       "delta": delta, "balance": agent["credits"]},
+                      actor=actor)
+
+    def _game_emit(self, events, game):
+        for ev in events:
+            emit(ev["type"], {k: v for k, v in ev.items() if k != "type"})
+
+    def _sweep_stale_game_rounds(self):
+        """Close rounds left open past ROUND_TIMEOUT (auto-play fills gaps)."""
+        now = utcnow()
+        for game in state["games"].values():
+            if game["status"] != "running":
+                continue
+            if now - (game["round_opened_at"] or now) < games.ROUND_TIMEOUT:
+                continue
+            events = games.close_round(game, now)
+            for ev in events:
+                if ev["type"] == "game_finished":
+                    self._game_credit(ev["champion"], game["pot"],
+                                      "game_won", game, "system")
+            ledger_append("game_round_timeout",
+                          {"game_id": game["id"], "round": game["round"]},
+                          actor="system")
+            self._game_emit(events, game)
+
+    def _prune_games(self):
+        terminal = [g for g in state["games"].values()
+                    if g["status"] in ("finished", "cancelled")]
+        terminal.sort(key=lambda g: g.get("finished_at") or 0)
+        for g in terminal[:-50]:
+            del state["games"][g["id"]]
+
+    def _route_games_post(self, rest, body):
+        with lock:
+            self._sweep_stale_game_rounds()
+            if rest == []:
+                return self._game_create(body)
+            game = state["games"].get(rest[0]) if rest else None
+            if game is None:
+                return self._send(404, {"error": "unknown game"})
+            if rest[1:] == ["join"]:
+                return self._game_join(game, body)
+            if rest[1:] == ["start"]:
+                return self._game_start(game, body)
+            if rest[1:] == ["move"]:
+                return self._game_move(game, body)
+            if rest[1:] == ["cancel"]:
+                return self._game_cancel(game, body)
+            return self._send(404, {"error": "not found"})
+
+    def _game_create(self, body):
+        agent, err = self._game_agent(body)
+        if err:
+            return self._send(err["code"], {"error": err["error"]})
+        try:
+            stake = credit_amount(body.get("stake", 0))
+        except (ValueError, TypeError):
+            return self._send(400, {"error": "stake must be a non-negative "
+                                             "number with ≤2 decimals"})
+        if agent.get("credits", 0) < stake:
+            return self._send(409, {"error": "insufficient credits for stake",
+                                    "credits": agent.get("credits", 0)})
+        game, gerr = games.new_game(
+            new_id("game"), body.get("kind", "rps"), agent["id"],
+            body.get("label", ""), stake,
+            body.get("max_players", 8), utcnow())
+        if gerr:
+            return self._send(gerr["code"], {"error": gerr["error"]})
+        self._game_credit(agent["id"], -stake, "game_stake", game, agent["id"])
+        state["games"][game["id"]] = game
+        self._prune_games()
+        save_state()
+        emit("game_created", {"game_id": game["id"], "kind": game["kind"],
+                              "label": game["label"], "stake": game["stake"],
+                              "creator": agent["id"]})
+        return self._send(200, {"game": games.public_view(game, agent["id"])})
+
+    def _game_join(self, game, body):
+        agent, err = self._game_agent(body)
+        if err:
+            return self._send(err["code"], {"error": err["error"]})
+        if agent.get("credits", 0) < game["stake"]:
+            return self._send(409, {"error": "insufficient credits for stake",
+                                    "credits": agent.get("credits", 0)})
+        delta, gerr = games.join_game(game, agent["id"], utcnow())
+        if gerr:
+            return self._send(gerr["code"], {"error": gerr["error"]})
+        self._game_credit(agent["id"], delta, "game_stake", game, agent["id"])
+        save_state()
+        emit("game_joined", {"game_id": game["id"], "agent_id": agent["id"],
+                             "players": len(game["players"])})
+        return self._send(200, {"game": games.public_view(game, agent["id"])})
+
+    def _game_start(self, game, body):
+        agent, err = self._game_agent(body)
+        if err:
+            return self._send(err["code"], {"error": err["error"]})
+        gerr = games.start_game(game, agent["id"], utcnow())
+        if gerr:
+            return self._send(gerr["code"], {"error": gerr["error"]})
+        ledger_append("game_started", {"game_id": game["id"],
+                                       "players": list(game["players"]),
+                                       "pot": game["pot"]}, actor=agent["id"])
+        save_state()
+        emit("game_started", {"game_id": game["id"],
+                              "players": list(game["players"])})
+        return self._send(200, {"game": games.public_view(game, agent["id"])})
+
+    def _game_move(self, game, body):
+        agent, err = self._game_agent(body)
+        if err:
+            return self._send(err["code"], {"error": err["error"]})
+        events, gerr = games.submit_move(game, agent["id"],
+                                        body.get("move"), utcnow())
+        if gerr:
+            return self._send(gerr["code"], {"error": gerr["error"]})
+        for ev in events:
+            if ev["type"] == "game_finished":
+                self._game_credit(ev["champion"], game["pot"],
+                                  "game_won", game, "system")
+            ledger_append(ev["type"],
+                          {k: v for k, v in ev.items() if k != "type"},
+                          actor=agent["id"])
+        save_state()
+        self._game_emit(events, game)
+        return self._send(200, {"game": games.public_view(game, agent["id"]),
+                                "events": events})
+
+    def _game_cancel(self, game, body):
+        agent, err = self._game_agent(body)
+        if err:
+            return self._send(err["code"], {"error": err["error"]})
+        refunds, gerr = games.cancel_game(game, agent["id"], utcnow())
+        if gerr:
+            return self._send(gerr["code"], {"error": gerr["error"]})
+        for aid, amt in refunds:
+            self._game_credit(aid, amt, "game_refund", game, agent["id"])
+        save_state()
+        emit("game_cancelled", {"game_id": game["id"], "refunds": len(refunds)})
+        return self._send(200, {"game": games.public_view(game, agent["id"])})
 
     # ---------- A2A (minimal JSON-RPC slice) ----------
     def _handle_a2a(self, body):
