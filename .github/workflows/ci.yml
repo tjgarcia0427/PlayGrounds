@@ -14,7 +14,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +54,7 @@ jobs:
           node mvp/test_interactions.mjs
           node mvp/test_playful.mjs
           node mvp/test_personality.mjs
+          node mvp/test_plush_art.mjs
           node --check mvp/assets/campus.js
 
       - name: Install pinned browser QA tools
@@ -111,3 +112,27 @@ jobs:
       - name: Stop test server
         if: always()
         run: kill "$(cat "$RUNNER_TEMP/ci-server.pid")" 2>/dev/null || true
+
+  plush-art:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Chrome plush art and crowd QA
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/plush-check.mjs
+      - name: Upload original-model art evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plush-art-chrome
+          path: mvp/browser-qa/artifacts/plush-*
+          if-no-files-found: warn
