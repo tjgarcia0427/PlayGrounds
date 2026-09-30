@@ -1,14 +1,23 @@
 # Shared HTTPS staging — issue #26
 
-**Not deployed. Do not expose main or PR #23 at 59f6f5d2.** Security review
-blockers remain in that PR. These templates are preparation, not a deployment
-approval or proof that the application is safe over HTTPS.
+**Application not deployed.** On 2026-09-30, maintenance-only HTTPS became
+available at `https://plushplaygrounds.duckdns.org`: Caddy issued a valid
+Let's Encrypt certificate, HTTP redirects with 308, and all HTTPS paths return
+a static preparation message (503). No app reverse proxy is active.
+
+PR23 revision `525ab16ba523e0d69909fc56f5e31054210c901e` still has a reproduced
+final-authorization-check/write SSE race in live and replay delivery. These
+templates are preparation, not security approval or permission to bypass review.
+The host's maintenance configuration is intentionally different from the future
+reverse-proxy template in this directory; do not replace it until gates pass.
 
 ## Prerequisites
 
-1. Muse repairs #23 isolation, canonical persistence/restart, SSE revocation,
-   nested A2A authorization, scoped lifecycle events and trusted HTTPS origins.
-   Also fix public-mode auth/rate limits and supply #27/#28 UI contracts.
+1. Muse completes #23 SSE revocation/delivery serialization and integrates
+   current main. Preserve the room isolation, persistence, nested A2A auth and
+   origin fixes already reviewed. Games were merged in #38: reconcile state
+   sanitization so neither room registries nor unrevealed game moves leak.
+   Games remain lobby/operator-only until per-agent authorization is reviewed.
 2. Independent exact-head review and green CI; integrate #27/#28. Check real
    backend + Chrome, not just the synthetic UI fixture.
 3. Owned hostname, DNS A/AAAA pointing at this VPS, TCP 80/443 reachable through
@@ -20,7 +29,8 @@ approval or proof that the application is safe over HTTPS.
   existing units/configs first; preserve unrelated sites and keep Caddy storage
   persistent for certificate renewal. Merge `Caddyfile` as one site and validate
   with `PLAYGROUNDS_HOST=<hostname> caddy validate --config deploy/Caddyfile
-  --adapter caddyfile` before any reload. Make the hostname available to Caddy's
+  --adapter caddyfile` before activation. The installed maintenance service has `admin off`; use a
+  controlled restart after validation, not an admin-API reload. Make the hostname available to Caddy's
   service environment or replace only that placeholder in the staged site.
 - Create an unprivileged `playgrounds` system user. Deploy a reviewed immutable
   commit under `/opt/playgrounds/releases/<sha>`; `/opt/playgrounds/current`
