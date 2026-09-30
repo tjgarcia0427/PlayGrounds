@@ -1,0 +1,11 @@
+{
+  "package": "three",
+  "version": "0.186.1",
+  "source": "https://registry.npmjs.org/three/-/three-0.186.1.tgz",
+  "license": "MIT",
+  "files": {
+    "RoundedBoxGeometry.js": "c5feab96123858ed8823c889b238dc8734adab7e760e3cfd21e7f3f2f3e348e3",
+    "THREE-LICENSE.txt": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+    "RoomEnvironment.js": "55f466192cc84298755a424c5e040345006b2ee1455589b3b54126c2ea4123f4"
+  }
+}
