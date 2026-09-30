@@ -14,7 +14,9 @@ Configure in any MCP client, e.g. Claude Desktop:
       "args": ["/home/hatch/workspace/goals/playgrounds/mvp/mcp_server.py"] } } }
 
 Requires the protocol server on http://127.0.0.1:8471 (server.py).
-Set PLAYGROUNDS_BASE to point at a test server instead.
+Set PLAYGROUNDS_BASE to an origin. Secure rooms additionally use
+PLAYGROUNDS_ROOM_ID and PLAYGROUNDS_TOKEN supplied by the client secret manager.
+Remote credentials require HTTPS. See docs/MCP-ROOM-ONBOARDING.md.
 
 NOTE: the named agents above are MCP-capable examples, not claims of
 integration — none have been individually tested against this server yet.
@@ -22,28 +24,79 @@ integration — none have been individually tested against this server yet.
 import json
 import os
 import sys
+import re
+from urllib.parse import urlsplit, urlencode
 import urllib.request
 import urllib.error
 
-BASE = os.environ.get("PLAYGROUNDS_BASE", "http://127.0.0.1:8471")
+BASE = os.environ.get("PLAYGROUNDS_BASE", "http://127.0.0.1:8471").rstrip("/")
+TOKEN = os.environ.get("PLAYGROUNDS_TOKEN", "")
+ROOM = os.environ.get("PLAYGROUNDS_ROOM_ID", "")
 __version__ = "0.2.0"
+
+
+def redact(text):
+    return text.replace(TOKEN, "[redacted]") if TOKEN else text
 
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
 
 
-def api(method, path, data=None):
-    req = urllib.request.Request(
-        BASE + path, method=method,
-        data=json.dumps(data or {}).encode(),
-        headers={"Content-Type": "application/json"})
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Never forward a bearer to another URL, including same-origin redirects.
+
+
+def target(path):
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        origin = urlsplit(BASE)
+        port = origin.port
+    except ValueError:
+        raise RuntimeError("Invalid PLAYGROUNDS_BASE origin") from None
+    if (origin.scheme not in ("http", "https") or not origin.hostname
+            or origin.username is not None or origin.password is not None
+            or origin.path not in ("", "/") or origin.query or origin.fragment):
+        raise RuntimeError("PLAYGROUNDS_BASE must be an origin without credentials, path or query")
+    if TOKEN and ("\r" in TOKEN or "\n" in TOKEN):
+        raise RuntimeError("Invalid bearer configuration")
+    if TOKEN and origin.scheme != "https" and origin.hostname not in ("127.0.0.1", "::1", "localhost"):
+        raise RuntimeError("Remote bearer credentials require HTTPS")
+    if ROOM and (not re.fullmatch(r"room_[A-Za-z0-9]+", ROOM) or not TOKEN):
+        raise RuntimeError("Room mode requires a valid PLAYGROUNDS_ROOM_ID and PLAYGROUNDS_TOKEN")
+    if path == "/api/room-identity":
+        if not ROOM:
+            raise RuntimeError("Identity discovery requires room mode")
+        return BASE + "/api/rooms/" + ROOM
+    if not (path.startswith("/api/") or path == "/.well-known/agent-card.json"):
+        raise RuntimeError("Unsupported protocol path")
+    if ROOM:
+        if not path.startswith("/api/"):
+            raise RuntimeError("Lobby discovery is unavailable in room mode; use playgrounds_identity")
+        path = "/api/rooms/" + ROOM + "/" + path[5:]
+    return BASE + path
+
+
+def api(method, path, data=None):
+    headers = {"Content-Type": "application/json"}
+    if TOKEN:
+        headers["Authorization"] = "Bearer " + TOKEN
+    req = urllib.request.Request(target(path), method=method,
+        data=json.dumps(data or {}).encode() if method != "GET" else None,
+        headers=headers)
+    # Explicit direct connection: inherited proxy settings must not receive local bearers.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(req, timeout=20) as r:
             raw = r.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"playgrounds API HTTP {e.code}: {e.read().decode() or 'no body'}")
+        code = e.code
+        e.close()
+        # Do not echo response bodies/URLs: an upstream error could reflect a token.
+        raise RuntimeError(f"playgrounds API HTTP {code}; check room access and server status") from None
+    except urllib.error.URLError:
+        raise RuntimeError("Playgrounds connection failed; check origin, TLS and server availability") from None
 
 
 def T(name, desc, props, required=()):
@@ -183,7 +236,23 @@ TOOLS = [
 ]
 
 
+def available_tools():
+    if not ROOM:
+        return TOOLS
+    return [t for t in TOOLS if t["name"] not in
+            ("playgrounds_register_agent", "playgrounds_playground_card")] + [
+        T("playgrounds_identity", "Read this room membership and caller_agent_id. Use that identity for writes; never impersonate another member.", {})]
+
+
 def call_tool(name, a):
+    # IDs form path segments. Reject traversal/query injection rather than normalizing it.
+    for key, value in a.items():
+        if key.endswith("_id") and value is not None and (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value)):
+            raise RuntimeError("Invalid protocol identifier")
+    if ROOM and name in ("playgrounds_register_agent", "playgrounds_playground_card"):
+        raise RuntimeError("Room membership is created by invitation; use playgrounds_identity")
+    if name == "playgrounds_identity":
+        return api("GET", "/api/room-identity")
     if name == "playgrounds_world":
         return api("GET", "/api/world")
     if name == "playgrounds_move":
@@ -245,9 +314,9 @@ def call_tool(name, a):
     if name == "playgrounds_read_ledger":
         q = f"?since={int(a.get('since', 0))}"
         if a.get("goal_id"):
-            q += f"&goal_id={a['goal_id']}"
+            q += "&" + urlencode({"goal_id": a["goal_id"]})
         if a.get("type"):
-            q += f"&type={a['type']}"
+            q += "&" + urlencode({"type": a["type"]})
         return api("GET", f"/api/ledger{q}")
     if name == "playgrounds_agent_card":
         return api("GET", f"/api/agents/{a['agent_id']}/card")
@@ -302,7 +371,7 @@ def call_tool(name, a):
     if name == "playgrounds_read_messages":
         q = f"?since={int(a.get('since', 0))}"
         if a.get("goal_id"):
-            q += f"&goal_id={a['goal_id']}"
+            q += "&" + urlencode({"goal_id": a["goal_id"]})
         return api("GET", f"/api/messages{q}")
     raise RuntimeError(f"unknown tool: {name}")
 
@@ -317,16 +386,16 @@ def handle(msg):
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "playgrounds", "version": "0.2.0"}}}
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": mid, "result": {"tools": available_tools()}}
     if method == "tools/call":
         p = msg.get("params", {})
         try:
             result = call_tool(p.get("name"), p.get("arguments") or {})
             return {"jsonrpc": "2.0", "id": mid, "result": {
-                "content": [{"type": "text", "text": json.dumps(result, indent=1)}]}}
+                "content": [{"type": "text", "text": redact(json.dumps(result, indent=1))}]}}
         except Exception as e:
             return {"jsonrpc": "2.0", "id": mid, "result": {
-                "content": [{"type": "text", "text": f"error: {e}"}],
+                "content": [{"type": "text", "text": "error: " + redact(str(e))}],
                 "isError": True}}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": mid, "result": {}}
@@ -351,7 +420,7 @@ def main():
         except Exception as e:
             mid = msg.get("id")
             resp = ({"jsonrpc": "2.0", "id": mid,
-                     "error": {"code": -32603, "message": str(e)}}
+                     "error": {"code": -32603, "message": redact(str(e))}}
                     if mid is not None else None)
         if resp is not None:
             sys.stdout.write(json.dumps(resp) + "\n")

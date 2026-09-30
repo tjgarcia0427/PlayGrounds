@@ -25,6 +25,9 @@ jobs:
       - name: Publish ownership regression
         run: python3 mvp/test_ownership.py
 
+      - name: MCP credential transport regressions
+        run: python3 mvp/test_mcp_transport.py
+
       - name: Core v0.2 suite (23 tests, self-contained)
         run: python3 mvp/test_v02.py
 
@@ -136,3 +139,20 @@ jobs:
           name: plush-art-chrome
           path: mvp/browser-qa/artifacts/plush-*
           if-no-files-found: warn
+
+  mcp-room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 525ab16ba523e0d69909fc56f5e31054210c901e
+          path: .qa-room-backend
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Real room backend with authenticated stdio MCP clients
+        env:
+          ROOM_BACKEND_ROOT: ${{ github.workspace }}/.qa-room-backend
+        run: python3 mvp/test_mcp_rooms.py
