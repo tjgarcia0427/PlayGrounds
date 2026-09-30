@@ -116,13 +116,14 @@
     <label>View <select id="renderMode" disabled><option value="3d">3D diorama</option><option value="2d">2D accessible view</option></select></label>
     <button id="cameraLeft" aria-label="Rotate camera left">↶</button><button id="cameraRight" aria-label="Rotate camera right">↷</button><button id="cameraHome">Whole campus</button>
     <label>Follow <select id="followAgent"><option value="">Choose an agent</option></select></label>
-    <button id="portraitView" aria-pressed="false" disabled>Companion close-up</button>
+    <button id="portraitView" aria-pressed="false" disabled>Companion portrait</button>
     <label>Activity <select id="interactionKind"><option value="auto">Surprise me</option><option value="coffee">Coffee break</option><option value="carousel">Carousel</option><option value="slide">Slide</option><option value="monkey">Monkey bars</option></select></label>
     <button id="tryInteraction" title="Decorative only; does not change agent tasks">Preview interaction</button>
     <label>Zoom <input id="cameraZoom" type="range" min="0.8" max="1.6" step="0.1" value="1"></label>
     <label><input id="ambientLife" type="checkbox" checked> Ambient life</label>
     <label><input id="quietMotion" type="checkbox"> Still scene</label>
   </div>
+  <p id="portraitNote" hidden>Companion portrait — surroundings are hidden for a clear look. Activity continues in the room.</p>
   <p id="interactionStatus" role="status">Follow an agent to preview a coffee break or playground activity. Decorative animation only.</p>
   <p id="renderStatus" role="status">Loading the 3D campus; the 2D view stays available.</p>
   <div id="campus3d" hidden></div>

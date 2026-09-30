@@ -12,7 +12,7 @@ export const PLUSH_STYLES=Object.freeze([
 export function plushStyle(seed){return PLUSH_STYLES[(seed>>>0)%PLUSH_STYLES.length];}
 export function createArtKit(){
   const sphere=new THREE.SphereGeometry(1,20,16),cylinder=new THREE.CylinderGeometry(1,1,1,20);
-  const rounded=new RoundedBoxGeometry(1,1,1,2,.12),fiber=new THREE.ConeGeometry(.008,1,3);
+  const rounded=new RoundedBoxGeometry(1,1,1,2,.12),fiber=new THREE.IcosahedronGeometry(1,0);
   const sharedGeometries=new Set([sphere,cylinder,rounded,fiber]);
   const colors=new Map(),cloths=new Map(),fiberMats=new Map();
   const size=128,data=new Uint8Array(size*size*4);let noise=45;
@@ -23,26 +23,26 @@ export function createArtKit(){
   function mesh(geo,material,pos,scale,parent){const o=new THREE.Mesh(geo,material);o.position.set(...pos);o.scale.set(...scale);o.castShadow=true;o.receiveShadow=true;parent.add(o);return o;}
   const ball=(material,pos,scale,parent)=>mesh(sphere,material,pos,scale,parent);
   const box=(material,pos,scale,parent)=>mesh(rounded,material,pos,scale,parent);
-  // Sparse, opaque instanced pile gives a fuzzy silhouette without alpha-shell
-  // overdraw or one mesh per fiber. This is stylized pile, not simulated hair.
+  // Opaque micro-fleece tufts are close-up LOD only: no alpha-shell overdraw.
+  // Small rounded tufts soften the surface without projecting stiff bristles.
   function pile(color,center,radii,parent,seed,count=320){
     if(!fiberMats.has(color))fiberMats.set(color,new THREE.MeshStandardMaterial({color,roughness:1}));
     const field=new THREE.InstancedMesh(fiber,fiberMats.get(color),count),dummy=new THREE.Object3D(),normal=new THREE.Vector3(),up=new THREE.Vector3(0,1,0);
     let n=seed>>>0;const rand=()=>{n=(Math.imul(n,1664525)+1013904223)>>>0;return n/4294967296;};
     for(let i=0;i<count;i++){
       const y=rand()*2-1,angle=rand()*Math.PI*2,h=Math.sqrt(1-y*y),x=h*Math.cos(angle),z=h*Math.sin(angle);
-      normal.set(x/radii[0],y/radii[1],z/radii[2]).normalize();const length=.018+rand()*.019;
-      dummy.position.set(center[0]+x*radii[0],center[1]+y*radii[1],center[2]+z*radii[2]).addScaledVector(normal,length*.28);
-      dummy.quaternion.setFromUnitVectors(up,normal);dummy.scale.set(.45+rand()*.4,length,.45+rand()*.4);dummy.updateMatrix();field.setMatrixAt(i,dummy.matrix);
+      normal.set(x/radii[0],y/radii[1],z/radii[2]).normalize();const length=.008+rand()*.007;
+      dummy.position.set(center[0]+x*radii[0],center[1]+y*radii[1],center[2]+z*radii[2]).addScaledVector(normal,length*.18);
+      dummy.quaternion.setFromUnitVectors(up,normal);dummy.scale.set(length*.85,length,length*.85);dummy.updateMatrix();field.setMatrixAt(i,dummy.matrix);
     }
     field.instanceMatrix.needsUpdate=true;field.castShadow=false;field.receiveShadow=false;parent.add(field);return field;
   }
   function plush(seed){
     const style=plushStyle(seed),skin=cloth(style.color),cream=cloth('#f3e6cf'),pink=matte('#e7aaa7');
-    const root=new THREE.Group(),body=new THREE.Group(),head=new THREE.Group();body.name='Body';head.name='Head';root.add(body);body.add(head);
-    ball(skin,[0,.62,0],[.36,.46,.29],body);pile(style.color,[0,.62,0],[.36,.46,.29],body,seed,280);
+    const fibers=[],root=new THREE.Group(),body=new THREE.Group(),head=new THREE.Group();body.name='Body';head.name='Head';root.add(body);body.add(head);
+    ball(skin,[0,.62,0],[.36,.46,.29],body);fibers.push(pile(style.color,[0,.62,0],[.36,.46,.29],body,seed,700));
     ball(cream,[0,.59,.235],[.255,.32,.095],body);
-    ball(skin,[0,1.21,0],[.47,.43,.37],head);pile(style.color,[0,1.21,0],[.47,.43,.37],head,seed+7,480);
+    ball(skin,[0,1.21,0],[.47,.43,.37],head);fibers.push(pile(style.color,[0,1.21,0],[.47,.43,.37],head,seed+7,1100));
     if(style.type==='fox'){
       for(const side of [-1,1]){const ear=ball(skin,[side*.31,1.61,0],[.17,.25,.13],head);ear.rotation.z=-side*.27;ball(cream,[side*.32,1.64,.085],[.095,.16,.07],head);ball(cream,[side*.19,1.08,.3],[.245,.18,.095],head);}
       const tail=ball(skin,[.2,.52,-.26],[.19,.27,.29],body);tail.rotation.z=-.5;
@@ -70,7 +70,7 @@ export function createArtKit(){
     const handle=new THREE.Mesh(new THREE.TorusGeometry(.075,.025,6,10),matte('#f7ebd8'));handle.position.set(.11,0,0);mug.add(handle);mug.visible=false;
     head.position.y=.98;for(const child of head.children)child.position.y-=.98;
     root.userData.artStyle=style.name;
-    return {root,body,head,eyes,arms,feet,mug,dispose(){root.traverse(o=>{if(o.isInstancedMesh)o.dispose();if(o.geometry&&!sharedGeometries.has(o.geometry))o.geometry.dispose();});eyeMat.dispose();}};
+    return {root,body,head,eyes,arms,feet,mug,fibers,dispose(){root.traverse(o=>{if(o.isInstancedMesh)o.dispose();if(o.geometry&&!sharedGeometries.has(o.geometry))o.geometry.dispose();});eyeMat.dispose();}};
   }
   return {plush,rounded,matte,cloth,ball,box,sharedGeometries};
 }

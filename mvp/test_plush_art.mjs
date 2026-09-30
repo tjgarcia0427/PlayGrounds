@@ -9,7 +9,7 @@ for(let seed=0;seed<6;seed++){
  for(const name of ['Head','Body','LeftArm','RightArm','LeftFoot','RightFoot'])assert.ok(actor.root.getObjectByName(name));
  const fields=[];actor.root.traverse(o=>{if(o.isInstancedMesh)fields.push(o)});
  const twins=[];twin.root.traverse(o=>{if(o.isInstancedMesh)twins.push(o)});
- assert.equal(fields.length,2);assert.ok(fields.reduce((n,o)=>n+o.count,0)<=800);
+ assert.equal(fields.length,2);assert.ok(fields.reduce((n,o)=>n+o.count,0)<=1800);
  fields.forEach((f,i)=>assert.deepEqual(f.instanceMatrix.array,twins[i].instanceMatrix.array));
  for(const pose of ['typing','walk','wave','seatedHeadphones','climb','slide','hang','sip']){
   for(let i=0;i<60;i++)rig.update(pose,.02);

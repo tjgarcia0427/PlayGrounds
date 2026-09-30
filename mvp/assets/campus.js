@@ -366,7 +366,7 @@ function buildCampus() {
     host.dataset.setting='slide-carousel-monkey-bars-modern-study';
     const followed=actors.get(follow.value);
     if(followed)setRoom(followed.path&&followed.crossing?'campus':followed.space);
-    for(const {o,side} of sets)o.visible=(room==='campus'||side===room)&&(o.userData.occupied!==false);
+    for(const {o,side} of sets)o.visible=!(portrait&&followed&&!followed.path)&&(room==='campus'||side===room)&&(o.userData.occupied!==false);
     host.dataset.room=room;
     host.dataset.floorArea=String(CAMPUS.width*CAMPUS.depth);
     host.dataset.following=follow.value;
@@ -408,7 +408,8 @@ function buildCampus() {
       for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;
       a.root.scale.setScalar(stale?.88:1);
-      a.root.visible=room==='campus'||a.space===room;
+      a.root.visible=detail?a===followed:room==='campus'||a.space===room;
+      for(const tuft of a.fibers)tuft.visible=!!detail&&a===followed;
       a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
@@ -419,6 +420,7 @@ function buildCampus() {
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
     host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);
     renderer.render(scene,camera);
+    document.getElementById('portraitNote').hidden=!detail;
     host.dataset.artDirection='plush-pack-2026-09-30';host.dataset.portrait=String(!!detail);
     host.dataset.artMetrics=JSON.stringify({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});
     host.dataset.characterStyles=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,style:a.root.userData.artStyle})));

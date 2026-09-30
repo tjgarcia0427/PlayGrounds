@@ -12,14 +12,16 @@ performance on phones.
   buttercup bear and rose fox. Larger heads, species-specific ears/tufts/tails,
   cream face/belly panels, glossy catchlights, blush, stitched smile and headphones.
 - Original seeded fabric bump texture and sparse opaque instanced pile. Two pile
-  draw calls per character; 760 fibers total. No transparent fur shells, downloaded
+  draw calls for the portrait character only; 1,800 small fleece tufts. Room views
+  use fabric bump shading without subpixel fibers. No transparent fur shells, downloaded
   textures, reference-image pixels, external CDN or inference service.
 - Rounded furniture/building edges, mint slide supports and pink toy turret dome.
 - Warm rear bookshelves with colored books, arch crowns, window plants and desk
   stationery. Bookshelf footprints are included in pathfinding.
-- A labeled Companion close-up control after selecting an agent. Camera position,
+- A labeled Companion portrait control after selecting an agent. Camera position,
   aim and framing blend; reduced-motion switches directly. Actual room travel
-  returns to wide framing. It is camera-only and never changes protocol presence.
+  returns to wide framing. The portrait explicitly hides surroundings/other actors for clarity; normal room
+  view restores everyone. It never changes protocol presence.
 
 ## Existing solutions and licenses
 
