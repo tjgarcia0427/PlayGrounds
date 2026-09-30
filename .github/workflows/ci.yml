@@ -47,6 +47,7 @@ jobs:
       - name: 3D layout and module checks
         run: |
           node mvp/test_campus.mjs
+          node mvp/test_expanded.mjs
           node mvp/test_interactions.mjs
           node mvp/test_playful.mjs
           node mvp/test_personality.mjs

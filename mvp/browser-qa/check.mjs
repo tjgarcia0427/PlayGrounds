@@ -54,6 +54,7 @@ try {
   }
   assert.deepEqual(await api('/api/ledger'),personalityLedger,'personality gestures must not synthesize protocol events');
   const unchanged=await api('/api/world');
+  assert.ok(Number(await page.locator('#campus3d').getAttribute('data-floor-area'))>340,'expanded floor area');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-desktop.png')});
   await page.selectOption('#followAgent',agents[3].id);
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground');
@@ -109,9 +110,17 @@ try {
   await page.click('#classTab');
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'classroom-desktop.png')});
+  await page.click('#cameraHome');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='campus');
+  await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'expanded-campus-desktop.png')});
   await page.setViewportSize({width:390,height:844});
+  await page.click('#classTab');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-mobile.png')});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'mobile viewport must not overflow');
+  await page.click('#playTab');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground');
+  await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'expanded-playground-mobile.png')});
   await page.selectOption('#renderMode','2d');assert.equal(await page.locator('#worldStage').isVisible(),true);
   // Block WebGL only inside this test page to exercise the advertised fallback.
   await page.addInitScript(()=>{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...rest){return type.startsWith('webgl')?null:get.call(this,type,...rest)}});
