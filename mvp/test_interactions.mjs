@@ -18,7 +18,7 @@ assert.equal(route(COFFEE,{x:99,z:99}),null,'never accept partial routes');
 const actor=(id,space,index=0)=>({id,space,seed:1,target:spot(space,index),stale:false,moving:false});
 const a=actor('a','classroom'),b=actor('b','classroom',1),c=actor('c','playground');
 const snapshot=JSON.stringify([a,b,c]),d=new InteractionDirector(route);
-assert.ok(d.start(a));assert.equal(d.start(b),false,'coffee reservation exclusive');assert.ok(d.start(c),'independent equipment reservation');
+assert.ok(d.start(a));assert.equal(d.start(b),false,'coffee reservation exclusive');assert.ok(d.start(c,'carousel'),'independent equipment reservation');
 const stages={coffee:new Set(),carousel:new Set()};let returnedCoffee=false,returnedCarousel=false;
 for(let i=0;i<1000 && (!returnedCoffee||!returnedCarousel);i++) {
  const frames=d.tick(.1,[a,b,c],true,i*.022);
@@ -34,11 +34,11 @@ const q=new InteractionDirector(route);q.start(a);q.tick(.1,[{...a,stale:true}],
 q.start(a);q.tick(.1,[a],false,0);assert.equal(q.active.size,0);assert.equal(q.leases.size,0);
 const frozenClock=q.clock;q.tick(60,[a],false,0);assert.equal(q.clock,frozenClock,'Still scene must freeze pose scheduling, not just limb motion');
 q.start(a);q.tick(.1,[],true,0);assert.equal(q.active.size,0,'departed agent releases slot');
-const rideDirector=new InteractionDirector(route);rideDirector.start(c);
+const rideDirector=new InteractionDirector(route);rideDirector.start(c,'carousel');
 for(let i=0;i<1000&&rideDirector.active.get(c.id)?.stage!=='ride';i++)rideDirector.tick(.1,[c],true,i*.02,false);
 const interrupted=rideDirector.cancel(c.id);assert.deepEqual(interrupted.exit,CAROUSEL_ENTRY);assert.ok(route(interrupted.exit,spot('classroom',0)),'interrupted rider has a ground exit route');
 q.start(a);assert.ok(q.cancel(a.id));assert.ok(q.start(b),'interruption releases slot immediately');
-const root=new Group();for(const name of ['Body','LeftArm','RightArm','LeftFoot','RightFoot']){const g=new Group();g.name=name;root.add(g)}
+const root=new Group();for(const name of ['Head','Body','LeftArm','RightArm','LeftFoot','RightFoot']){const g=new Group();g.name=name;root.add(g)}
 const anim=animateCharacter(root);anim.update('typing',.1);for(let i=0;i<20;i++)anim.update('typing',.1);
 const y=root.getObjectByName('Body').position.y;assert.ok(y>.2,'seated work pose active');anim.update('walk',.01);assert.ok(Math.abs(root.getObjectByName('Body').position.y-y)<.06,'pose transition blends instead of snapping');
 anim.update('idle',0,true);const still=root.getObjectByName('Body').position.y;anim.update('idle',1,true);assert.equal(root.getObjectByName('Body').position.y,still);anim.dispose();

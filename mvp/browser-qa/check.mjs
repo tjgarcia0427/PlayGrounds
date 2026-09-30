@@ -9,7 +9,7 @@ assert.ok(chrome && existsSync(chrome),'CHROME_PATH must explicitly identify ins
 const temp=mkdtempSync(join(tmpdir(),'playgrounds-chrome-'));
 const base='http://127.0.0.1:8494';
 const output=resolve('mvp/browser-qa/artifacts');mkdirSync(output,{recursive:true});
-const server=spawn('python3',['mvp/server.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8494'},stdio:['ignore','pipe','pipe']});
+const server=spawn('python3',['mvp/browser-qa/fixture_server.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8494'},stdio:['ignore','pipe','pipe']});
 let logs='';server.stdout.on('data',d=>logs+=d);server.stderr.on('data',d=>logs+=d);
 let browser,heartbeat;
 const presence=world=>world.agents.map(({last_heartbeat,...agent})=>agent);
@@ -41,7 +41,20 @@ try {
   assert.equal(await page.locator('#worldStage').isVisible(),false);
   // Explicit fixture caption is included in each screenshot.
   await page.evaluate(()=>{const b=document.createElement('p');b.textContent='VISUAL QA FIXTURE — synthetic test agents, not live participants';b.style.cssText='padding:12px;background:#ffe4b5;color:#473d4b;font-weight:bold';document.querySelector('[aria-label="Shared agent world"]').prepend(b)});
+  // Observe actual blended transforms, not a synthetic clock jump or pose label alone.
+  const personalityLedger=await api('/api/ledger');
+  for(const [id,pose,file] of [[agents[5].id,'lookAround','look-around-desktop.png'],[agents[5].id,'headphones','headphone-adjust-desktop.png'],[agents[0].id,'seatedHeadphones','seated-headphone-adjust-desktop.png']]){
+    await page.selectOption('#followAgent',id);
+    try { await page.waitForFunction(({id,pose})=>JSON.parse(document.getElementById('campus3d').dataset.poses||'[]').some(a=>a.id===id&&a.pose===pose&&(pose==='lookAround'?Math.abs(a.headYaw)>.16:a.rightArmX<-2.5)&&(pose!=='seatedHeadphones'||a.bodyY>.2)),{id,pose},{timeout:90000}); } catch(error) {
+      console.error('Personality observation failed',id,pose,await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
+      await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'personality-failure.png')});
+      throw error;
+    }
+    await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,file)});
+  }
+  assert.deepEqual(await api('/api/ledger'),personalityLedger,'personality gestures must not synthesize protocol events');
   const unchanged=await api('/api/world');
+  assert.ok(Number(await page.locator('#campus3d').getAttribute('data-floor-area'))>340,'expanded floor area');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-desktop.png')});
   await page.selectOption('#followAgent',agents[3].id);
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground');
@@ -57,15 +70,25 @@ try {
   await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='sip'),agents[0].id,{timeout:90000});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'coffee-sip-desktop.png')});
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).coffee>=1,null,{timeout:90000});
-  await page.selectOption('#followAgent',agents[4].id);await page.click('#tryInteraction');
+  await page.selectOption('#followAgent',agents[4].id);await page.selectOption('#interactionKind','carousel');await page.click('#tryInteraction');
   await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='ride'),agents[4].id,{timeout:90000});
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'carousel-ride-desktop.png')});
   await page.waitForFunction(()=>JSON.parse(document.getElementById('campus3d').dataset.completed).carousel>=1,null,{timeout:90000});
+  for(const [kind,stage,pose] of [['slide','slide','slide'],['monkey','traverse','hang']]) {
+    // Side view makes the hanging pose visible behind the front ladder.
+    if(kind==='monkey')for(let i=0;i<3;i++)await page.click('#cameraRight');
+    await page.selectOption('#interactionKind',kind);await page.click('#tryInteraction');
+    await page.waitForFunction(({id,stage,pose})=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage===stage&&a.pose===pose),{id:agents[4].id,stage,pose},{timeout:90000});
+    await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,`${kind}-interaction-desktop.png`)});
+    await page.waitForFunction(kind=>JSON.parse(document.getElementById('campus3d').dataset.completed)[kind]>=1,kind,{timeout:90000});
+    if(kind==='monkey')for(let i=0;i<3;i++)await page.click('#cameraLeft');
+  }
   assert.deepEqual(presence(await api('/api/world')),beforeAmbient,'ambient interaction must not change agent work state');
   assert.deepEqual(await api('/api/ledger'),beforeLedger,'ambient interaction must not create ledger entries');
-  // A real presence change interrupts a second ride request and releases its lease.
+  // A real presence change interrupts a slide in flight, then follows its safe exit.
+  await page.selectOption('#interactionKind','slide');
   await page.click('#tryInteraction');
-  await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id),agents[4].id);
+  await page.waitForFunction(id=>JSON.parse(document.getElementById('campus3d').dataset.interactions).some(a=>a.id===id&&a.stage==='slide'&&a.pose==='slide'),agents[4].id,{timeout:90000});
   const nextGoal=await api('/api/goals',{title:'Interrupt interaction (QA)',budget:20});
   const interruptTask=await api(`/api/goals/${nextGoal.id}/tasks`,{title:'Real work wins over decoration',bounty:5});
   await api(`/api/tasks/${interruptTask.id}/claim`,{agent_id:agents[4].id});
@@ -87,9 +110,17 @@ try {
   await page.click('#classTab');
   await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'classroom-desktop.png')});
+  await page.click('#cameraHome');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='campus');
+  await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'expanded-campus-desktop.png')});
   await page.setViewportSize({width:390,height:844});
+  await page.click('#classTab');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='classroom');
   await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'campus-mobile.png')});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'mobile viewport must not overflow');
+  await page.click('#playTab');
+  await page.waitForFunction(()=>document.getElementById('campus3d').dataset.room==='playground');
+  await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'expanded-playground-mobile.png')});
   await page.selectOption('#renderMode','2d');assert.equal(await page.locator('#worldStage').isVisible(),true);
   // Block WebGL only inside this test page to exercise the advertised fallback.
   await page.addInitScript(()=>{const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...rest){return type.startsWith('webgl')?null:get.call(this,type,...rest)}});

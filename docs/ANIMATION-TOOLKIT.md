@@ -64,7 +64,8 @@ This is not actual model reasoning, coffee acquisition, or social conversation.
 
 ## Remaining in #17
 
-Slide and monkey-bar interactions; richer hand/foot contact and seated poses;
+The initial slide/monkey-bar and expression pass is described in
+[PLAYFUL-POLISH.md](PLAYFUL-POLISH.md). Remaining: richer hand/foot contact and seated poses;
 proper rigged glTF characters and facial expressions; cloth/fur material polish;
 dynamic crowd avoidance; session-adapter wiring beyond the current task-derived
 presence. Keep the approved pastel/plush direction throughout.
