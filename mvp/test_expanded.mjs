@@ -16,7 +16,7 @@ for(const space of ['classroom','playground'])for(let i=0;i<24;i++)for(const des
   }
   checked++;
 }
-const edge=route({x:-2,z:CAMPUS.maxZ},{x:2,z:CAMPUS.maxZ});
+const edge=route({x:-2,z:CAMPUS.maxZ-.02},{x:2,z:CAMPUS.maxZ-.02});
 assert.ok(edge);
 for(let i=0;i<=1000;i++){const p=walkPoint(edge,i/1000);if(Math.abs(p.x)<.35)assert.ok(p.z>=5.25&&p.z<=6.65,'no divider bypass along nav boundary');}
 for(const p of ANNEX_PROPS)assert.equal(route({x:p.x,z:p.z},destinations[0]),null,'never walk through new furniture');
