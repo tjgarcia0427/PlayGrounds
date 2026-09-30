@@ -23,11 +23,11 @@ function build(){
   // Original deterministic micro-grain: no downloaded texture or per-hair geometry.
   const size=128,data=new Uint8Array(size*size*4);let seed=47;
   for(let i=0;i<size*size;i++){seed=(Math.imul(seed,1664525)+1013904223)>>>0;const n=112+(seed>>>26);data.set([n,n,n,255],i*4)}
-  const fabric=new THREE.DataTexture(data,size,size,THREE.RGBAFormat);fabric.wrapS=fabric.wrapT=THREE.RepeatWrapping;fabric.repeat.set(7,7);fabric.magFilter=THREE.LinearFilter;fabric.minFilter=THREE.LinearMipmapLinearFilter;fabric.generateMipmaps=true;fabric.needsUpdate=true;
+  const fabric=new THREE.DataTexture(data,size,size,THREE.RGBAFormat);fabric.wrapS=fabric.wrapT=THREE.RepeatWrapping;fabric.repeat.set(2,2);fabric.magFilter=THREE.LinearFilter;fabric.minFilter=THREE.LinearMipmapLinearFilter;fabric.generateMipmaps=true;fabric.needsUpdate=true;
   const swappable=[];
   const matte=color=>new THREE.MeshStandardMaterial({color,roughness:.83});
   function cloth(color){
-    const baseline=matte(color),soft=new THREE.MeshPhysicalMaterial({color,roughness:.94,sheen:.7,sheenColor:'#fff4e3',sheenRoughness:.8,bumpMap:fabric,bumpScale:.018});
+    const baseline=matte(color),soft=new THREE.MeshPhysicalMaterial({color,roughness:.94,sheen:.35,sheenColor:'#eadbd0',sheenRoughness:.8,bumpMap:fabric,bumpScale:.018});
     return {baseline,soft};
   }
   const plush=cloth('#e5d5bb'),lilac=cloth('#b8a8cc'),cushion=cloth('#c4b3d4');
@@ -61,8 +61,8 @@ function build(){
   // Original plush character: cream fabric, inset face, bead eyes and padded headphones.
   const friend=new THREE.Group();friend.position.set(0,1.06,.12);scene.add(friend);
   ball(plush,[0,.4,0],[.57,.62,.44],friend);
-  box(plush,[0,1.12,-.02],[1.3,1.17,1.04],.34,friend);
-  box(cream,[0,1.12,.486],[.91,.76,.08],.038,friend);
+  ball(plush,[0,1.12,-.02],[.65,.585,.52],friend);
+  ball(cream,[0,1.12,.46],[.45,.38,.08],friend);
   for(const side of [-1,1]){
     ball(dark,[side*.22,1.2,.55],[.065,.081,.035],friend);
     ball(cream,[side*.22-.018,1.225,.579],[.017,.021,.008],friend);
@@ -73,7 +73,7 @@ function build(){
     disc(lilac,[side*.8,1.15,-.015],[.32,.12,.32],friend).rotation.z=Math.PI/2;
   }
   const smile=new THREE.Mesh(new THREE.TorusGeometry(.105,.019,8,24,Math.PI),dark);smile.rotation.z=Math.PI;smile.position.set(0,1.025,.546);friend.add(smile);
-  const band=new THREE.Mesh(new THREE.TorusGeometry(.72,.09,10,40,Math.PI),lilac.soft);band.position.set(0,1.25,-.05);friend.add(band);swappable.push({m:band,...lilac});
+  const band=new THREE.Mesh(new THREE.TorusGeometry(.68,.09,10,40,Math.PI),lilac.soft);band.position.set(0,1.10,-.05);friend.add(band);swappable.push({m:band,...lilac});
   // Reading table and carefully separated book / ceramic details.
   disc(wood,[1.9,.64,.95],[.72,.16,.72]);disc(wood,[1.9,.34,.95],[.16,.64,.16]);
   box(matte('#94b9ad'),[1.65,.75,.98],[.62,.085,.44],.025);
@@ -91,11 +91,11 @@ function build(){
   const c=contactCanvas.getContext('2d'),g=c.createRadialGradient(64,64,8,64,64,64);g.addColorStop(0,'rgba(91,69,95,.22)');g.addColorStop(1,'rgba(91,69,95,0)');c.fillStyle=g;c.fillRect(0,0,128,128);
   const contact=new THREE.Mesh(new THREE.PlaneGeometry(2.8,2.25),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(contactCanvas),transparent:true,depthWrite:false}));contact.rotation.x=-Math.PI/2;contact.position.set(0,.152,.1);scene.add(contact);
   let polished=true,front=false,clock=0,last=0;
-  function treatment(value){polished=value;for(const x of swappable)x.m.material=value?x.soft:x.baseline;scene.environment=value?env.texture:null;scene.environmentIntensity=.35;ambient.intensity=value?.65:1.15;key.intensity=value?2.15:2.6;contact.visible=value;document.querySelector('#baseline').setAttribute('aria-pressed',String(!value));document.querySelector('#polished').setAttribute('aria-pressed',String(value));host.dataset.treatment=value?'polished':'baseline';}
+  function treatment(value){polished=value;for(const x of swappable)x.m.material=value?x.soft:x.baseline;scene.environment=value?env.texture:null;scene.environmentIntensity=.12;ambient.intensity=value?.65:1.15;key.intensity=value?2.3:2.6;contact.visible=value;document.querySelector('#baseline').setAttribute('aria-pressed',String(!value));document.querySelector('#polished').setAttribute('aria-pressed',String(value));host.dataset.treatment=value?'polished':'baseline';}
   document.querySelector('#baseline').onclick=()=>treatment(false);document.querySelector('#polished').onclick=()=>treatment(true);
   function angle(value){front=value;document.querySelector('#front').setAttribute('aria-pressed',String(value));document.querySelector('#quarter').setAttribute('aria-pressed',String(!value));resize();}
   document.querySelector('#front').onclick=()=>angle(true);document.querySelector('#quarter').onclick=()=>angle(false);
-  function resize(){const w=host.clientWidth,h=host.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;const distance=camera.aspect<1?12.6:9.5;camera.position.set(front?0:distance*.53,front?3.2:4.3,front?distance:distance*.81);camera.lookAt(.15,1.35,0);camera.updateProjectionMatrix();}
+  function resize(){const w=host.clientWidth,h=host.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;const distance=Math.max(10.8,13.5/camera.aspect);camera.position.set(front?0:distance*.53,front?3.2:4.3,front?distance:distance*.81);camera.lookAt(.15,1.35,0);camera.updateProjectionMatrix();}
   new ResizeObserver(resize).observe(host);resize();treatment(true);
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();document.querySelector('#fallback').hidden=false;renderer.domElement.hidden=true;host.dataset.ready='false';});
   function frame(now){requestAnimationFrame(frame);if(document.hidden||now-last<1000/30)return;const dt=Math.min(.1,(now-(last||now))/1000);last=now;const still=document.querySelector('#still').checked||reduced.matches;if(!still)clock+=dt;friend.scale.y=1+(still?0:Math.sin(clock*1.8)*.009);renderer.render(scene,camera);host.dataset.ready='true';host.dataset.motionClock=String(clock);host.dataset.still=String(still);host.dataset.drawCalls=String(renderer.info.render.calls);host.dataset.triangles=String(renderer.info.render.triangles);metrics.textContent=`${polished?'Soft studio':'Baseline'} · ${renderer.info.render.calls} draw calls · ${renderer.info.render.triangles.toLocaleString()} triangles · ${size}×${size} shared fabric texture. Synthetic art fixture.`;}
