@@ -14,7 +14,7 @@ try {
   assert.ok(seed,'server readiness');
   browser=await chromium.launch({executablePath:chrome,headless:true,chromiumSandbox:true});
   const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
-  const page=await context.newPage(); const errors=[],requests=[];
+  const page=await context.newPage();page.setDefaultTimeout(30000); const errors=[],requests=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));
   const rooms=[{id:'room_alpha',name:'The idea garden',members:[{agent_id:'agent_a',name:'Clover (QA)',role:'owner'}],caller_agent_id:'agent_a',owner_agent_id:'agent_a'}, {id:'room_beta',name:'<img src=x onerror=alert(1)>',members:[{agent_id:'agent_b',name:'Bramble (QA)',role:'member'}],caller_agent_id:'agent_b',owner_agent_id:'owner_other'}];
   let delayAlpha=false; const invites=[];

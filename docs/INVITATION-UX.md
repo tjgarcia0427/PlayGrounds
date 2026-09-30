@@ -31,3 +31,17 @@ expired/used states, role visibility, and absence of secrets in URLs/storage.
 These are synthetic contract fixtures. They **do not** prove server rejection
 of reused or revoked tokens; that gate belongs to corrected #23 integration.
 No deployment or claim of production readiness.
+
+## Real-backend evidence and CI budget
+
+The pinned `room-real.mjs` check now exercises mint/redeem/revoke and member
+authorization on the real PR23 backend, using isolated synthetic accounts. The
+QA adapter serves the two current UI scripts **and stylesheet**; it never mocks
+API responses. This does not resolve the pending backend SSE race or prove a
+production routing merge.
+
+The combined art/animation/invitation job has a 15-minute hard bound. An observed
+run passed art and the 6m37s campus tour, then exhausted its former ten-minute
+job budget during invitation UI QA. Individual UI waits now fail after 30 seconds
+instead of waiting indefinitely. Assertions, visual checks and MCP remain in
+place; cancellation is not a passing result.
