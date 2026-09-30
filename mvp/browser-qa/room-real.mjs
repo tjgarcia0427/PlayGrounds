@@ -43,7 +43,7 @@ try {
     invite={token:await owner.inputValue('#inviteSecret')};await owner.locator('#dialogContent input[type=checkbox]').check();await owner.click('#dialogSubmit');
   }else invite=await json(`/api/rooms/${rid}/invites`,ownerKey,{label:'Real member invitation'});
   secrets.push(invite.token);
-  console.log('QA stage: member joins');await member.goto(base);await label(member);await member.click('#joinRoom');await member.fill('#joinRoomId',rid);await member.fill('#inviteKey',invite.token);await member.fill('#joinName','QA real companion');await member.click('#dialogSubmit');const memberKey=await saved(member);
+  console.log('QA stage: member joins');await member.goto(base);await label(member);await member.locator('#roomTools > summary').click();await member.click('#joinRoom');await member.fill('#joinRoomId',rid);await member.fill('#inviteKey',invite.token);await member.fill('#joinName','QA real companion');await member.click('#dialogSubmit');const memberKey=await saved(member);
   await member.waitForFunction(()=>document.getElementById('goalTitle').textContent.includes('Private real integration goal'));
   assert.equal((await api(`/api/rooms/${rid}/join`,null,{invite_token:invite.token,name:'Reuse'})).status,403,'single-use enforced');
   console.log('QA stage: member sees private goal');const memberInfo=await json(`/api/rooms/${rid}`,memberKey);
