@@ -1,0 +1,16 @@
+name: Blender asset contract
+on:
+  pull_request:
+    paths: ['art/blender/**', '.github/workflows/blender-asset.yml']
+permissions:
+  contents: read
+jobs:
+  glb-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check delivered fox binary, embedded texture, hierarchy and clips
+        run: python3 art/blender/fox/validate.py
