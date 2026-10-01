@@ -49,6 +49,9 @@ try {
     // than one 32s gesture cycle in 90 wall seconds. Observe a real full cycle
     // plus blend margin, with a separate bounded stall timeout. Do not jump the
     // animation clock, force a pose, or weaken the actual transform assertions.
+    // CI run36794961243 hit the 180s watchdog before reaching the 36s
+    // animation budget (software rendering advanced only 50.5s in 269s total).
+    // Allow 300 wall seconds, but still fail after 36 observed animation seconds.
     const startedClock=Number(await page.locator('#campus3d').getAttribute('data-animation-clock'));
     assert.ok(Number.isFinite(startedClock),'animation clock must be observable');
     try { await page.waitForFunction(({id,pose,startedClock})=>{
@@ -57,8 +60,8 @@ try {
       if(observed)return true;
       if(Number(host.dataset.animationClock)-startedClock>=36)throw new Error(`Missing ${pose} after a full animation cycle and blend margin`);
       return false;
-    },{id,pose,startedClock},{timeout:180000}); } catch(error) {
-      console.error('Personality observation failed',id,pose,await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
+    },{id,pose,startedClock},{timeout:300000}); } catch(error) {
+      console.error('Personality observation failed',id,pose,{startedClock},await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
       await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'personality-failure.png')});
       throw error;
     }
