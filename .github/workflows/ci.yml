@@ -55,6 +55,7 @@ jobs:
           node mvp/test_playful.mjs
           node mvp/test_personality.mjs
           node mvp/test_plush_art.mjs
+          node mvp/test_workboard.mjs
           node --check mvp/assets/campus.js
 
       - name: Install pinned browser QA tools
@@ -135,4 +136,27 @@ jobs:
         with:
           name: plush-art-chrome
           path: mvp/browser-qa/artifacts/plush-*
+          if-no-files-found: warn
+
+  workboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Real protocol and SSE work board in Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/workboard-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workboard-chrome
+          path: mvp/browser-qa/artifacts/workboard-*
           if-no-files-found: warn

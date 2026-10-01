@@ -1347,13 +1347,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "avatar not found"})
             with open(fp, "rb") as f:
                 self._send(200, f.read(), "image/png")
-        elif parsed.path in ("/assets/campus-art.js", "/assets/vendor/RoundedBoxGeometry.js", "/assets/campus.js", "/assets/campus-layout.js",
+        elif parsed.path in ("/assets/workboard.js", "/assets/workboard-model.js", "/assets/campus-art.js", "/assets/vendor/RoundedBoxGeometry.js", "/assets/campus.js", "/assets/campus-layout.js",
                              "/assets/campus-navigation.js", "/assets/campus-interactions.js",
                              "/assets/campus-animation.js", "/assets/vendor/three-pathfinding.module.js",
                              "/assets/vendor/three.module.js", "/assets/vendor/three.core.js"):
             # Exact allowlist, never an arbitrary filesystem/static-file route.
             with open(os.path.join(ROOT, parsed.path.lstrip("/")), "rb") as f:
                 self._send(200, f.read(), "text/javascript; charset=utf-8")
+        elif parsed.path == "/assets/workboard.css":
+            with open(os.path.join(ROOT, "assets", "workboard.css"), "rb") as f:
+                self._send(200, f.read(), "text/css; charset=utf-8")
         elif parsed.path == "/api/state":
             with lock:
                 snap = {k: v for k, v in state.items()
