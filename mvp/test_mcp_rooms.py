@@ -1,6 +1,6 @@
-"""Real pinned room backend + real stdio MCP processes; synthetic credentials only.
+"""Real current-checkout room backend + real stdio MCP processes; synthetic credentials only.
 
-Compatibility test, NOT approval of PR23's pending SSE repair or public deployment.
+Native integration with synthetic participants, NOT a live two-agent pilot or deployment approval.
 """
 import json
 import os
@@ -14,10 +14,9 @@ import time
 import urllib.request
 import unittest
 
-BACKEND = os.environ.get('ROOM_BACKEND_ROOT')
+BACKEND = Path(__file__).resolve().parents[1]
 MCP = Path(__file__).with_name('mcp_server.py').resolve()
 
-@unittest.skipUnless(BACKEND, 'ROOM_BACKEND_ROOT must point to pinned secure-room checkout')
 class Rooms(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -41,6 +41,9 @@ jobs:
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
+      - name: Secure rooms regressions
+        run: python3 mvp/test_rooms.py
+
       - name: Mini-games engine + HTTP API regressions
         run: python3 mvp/test_games.py
 
@@ -58,6 +61,7 @@ jobs:
           node mvp/test_playful.mjs
           node mvp/test_personality.mjs
           node mvp/test_plush_art.mjs
+          node mvp/test_workboard.mjs
           node --check mvp/assets/campus.js
 
       - name: Install pinned browser QA tools
@@ -140,19 +144,36 @@ jobs:
           path: mvp/browser-qa/artifacts/plush-*
           if-no-files-found: warn
 
+  workboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Real protocol and SSE work board in Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/workboard-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workboard-chrome
+          path: mvp/browser-qa/artifacts/workboard-*
+          if-no-files-found: warn
+
   mcp-room-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          ref: 525ab16ba523e0d69909fc56f5e31054210c901e
-          path: .qa-room-backend
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Real room backend with authenticated stdio MCP clients
-        env:
-          ROOM_BACKEND_ROOT: ${{ github.workspace }}/.qa-room-backend
+      - name: Native room backend with authenticated stdio MCP clients
         run: python3 mvp/test_mcp_rooms.py
