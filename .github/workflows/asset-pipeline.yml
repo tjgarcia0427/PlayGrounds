@@ -1,0 +1,32 @@
+name: Offline plush seed
+on:
+  pull_request:
+    paths: ['tools/unimate/**', '.github/workflows/asset-pipeline.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  seed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends blender python3-numpy python3-scipy python3-loguru python3-tqdm python3-matplotlib python3-imageio
+      - name: Export original animated seed (not AI-generated)
+        run: blender -b -t 2 --python-exit-code 1 -P tools/unimate/create_seed.py -- /tmp/plush-seed.glb
+      - run: python3 tools/unimate/inspect_glb.py /tmp/plush-seed.glb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hand-authored-seed-not-unimate-output
+          path: /tmp/plush-seed.glb
+      - name: Pinned UniMate preprocessing and GLB roundtrip (no inference)
+        run: |
+          git clone https://github.com/Friedrich-M/UniMate.git /tmp/unimate
+          git -C /tmp/unimate checkout 5d6aabedd947297b5ba6706d8e9113e68c0c3e4f
+          git clone https://github.com/inbar-2344/Motion.git /tmp/motion
+          git -C /tmp/motion checkout ac236251f90e5ca37c444c53ad383fc85de6d833
+          python3 tools/unimate/roundtrip.py --unimate /tmp/unimate --motion /tmp/motion --output /tmp/unimate-roundtrip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unimate-preprocess-roundtrip-not-inference
+          path: /tmp/unimate-roundtrip/roundtrip/*.glb
