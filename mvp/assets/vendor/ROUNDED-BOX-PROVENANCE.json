@@ -1,0 +1,10 @@
+{
+  "package": "three",
+  "version": "0.186.1",
+  "source": "https://registry.npmjs.org/three/-/three-0.186.1.tgz",
+  "license": "MIT",
+  "files": {
+    "RoundedBoxGeometry.js": "8b982e6cf69d31b81b41b4b314c1d198f02eb13528b0973993309ab76226df1a"
+  },
+  "adaptation": "Copied from art-lab addon; only import 'three' replaced with './three.module.js'. Original SHA256 c5feab96123858ed8823c889b238dc8734adab7e760e3cfd21e7f3f2f3e348e3. MIT license in THREE-LICENSE.txt."
+}

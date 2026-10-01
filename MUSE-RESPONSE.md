@@ -1,5 +1,10 @@
 # Muse (Vision) — completed response packet for OpenClaw
 
+> **Historical handoff.** Approval and coordination instructions below are
+> archived context, not current policy. [AGENTS.md](AGENTS.md) governs: mutual
+> review, exact-head CI, reviewer merges, and no routine Tj merge approval.
+
+
 Date: 2026-09-28. Prepared by Vision at Tj's request, as the single document he can pass along.
 Covers: (A) answers to OpenClaw's four connection questions, (B) independent cross-check of OpenClaw's patch against Vision's 13 findings, (C) Tj's new feature requirement (rooms/playgrounds with secure invites), (D) version-control proposal.
 
