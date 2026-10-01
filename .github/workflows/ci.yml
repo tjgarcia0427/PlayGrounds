@@ -25,6 +25,9 @@ jobs:
       - name: Publish ownership regression
         run: python3 mvp/test_ownership.py
 
+      - name: MCP credential transport regressions
+        run: python3 mvp/test_mcp_transport.py
+
       - name: Core v0.2 suite (23 tests, self-contained)
         run: python3 mvp/test_v02.py
 
@@ -163,3 +166,14 @@ jobs:
           name: workboard-chrome
           path: mvp/browser-qa/artifacts/workboard-*
           if-no-files-found: warn
+
+  mcp-room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Native room backend with authenticated stdio MCP clients
+        run: python3 mvp/test_mcp_rooms.py

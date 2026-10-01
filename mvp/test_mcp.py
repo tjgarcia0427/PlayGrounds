@@ -168,23 +168,38 @@ print("escrow ok: 40 locked, 60 available")
 # over-budget claims are rejected
 pricey = call("playgrounds_create_task",
               {"goal_id": egid, "title": "Impossible task", "bounty": 61}, nid())
-try:
-    call("playgrounds_claim_task", {"agent_id": writer_id, "task_id": pricey["id"]}, nid())
-    raise SystemExit("over-budget claim should have failed")
-except AssertionError as e:
-    assert "insufficient goal budget" in str(e), e
+# The connector intentionally does not expose upstream error bodies. Check the
+# exact sanitized status AND the domain state so an unrelated denial cannot pass.
+r = rpc("tools/call", {"name": "playgrounds_claim_task", "arguments":
+        {"agent_id": writer_id, "task_id": pricey["id"]}}, nid())
+assert r["result"].get("isError") is True, r
+assert r["result"]["content"][0]["text"] == (
+    "error: playgrounds API HTTP 409; check room access and server status"), r
+st = call("playgrounds_list_tasks", {"goal_id": egid}, nid())
+rejected = next(t for t in st["tasks"] if t["id"] == pricey["id"])
+assert rejected["status"] == pricey["status"] and rejected.get("agent_id") is None, rejected
+assert rejected.get("escrow", 0) == 0, rejected
+goals = call("playgrounds_list_goals", {}, nid())
+eg = next(g for g in goals["goals"] if g["id"] == egid)
+assert eg["budget_available"] == 60 and eg["budget_spent"] == 0, eg
 print("budget guard ok: claim beyond budget rejected")
 
 # complete + verify with partial credit: 30 of 40 paid, 10 returns to budget
 call("playgrounds_complete_task", {"agent_id": coder_id, "task_id": htid,
                                    "result": "auth refactored, tests pass"}, nid())
 # no self-verification
-try:
-    call("playgrounds_verify_task", {"verifier_agent_id": coder_id, "task_id": htid,
-                                     "approved": True}, nid())
-    raise SystemExit("self-verification should have failed")
-except AssertionError as e:
-    assert "cannot verify their own work" in str(e), e
+r = rpc("tools/call", {"name": "playgrounds_verify_task", "arguments":
+        {"verifier_agent_id": coder_id, "task_id": htid, "approved": True}}, nid())
+assert r["result"].get("isError") is True, r
+assert r["result"]["content"][0]["text"] == (
+    "error: playgrounds API HTTP 403; check room access and server status"), r
+st = call("playgrounds_list_tasks", {"goal_id": egid}, nid())
+pending = next(t for t in st["tasks"] if t["id"] == htid)
+assert pending["status"] == "pending_verification" and pending["escrow"] == 40, pending
+assert pending.get("verification_receipt") is None, pending
+assert pending.get("settlement_receipt") is None, pending
+cstats = call("playgrounds_agent_stats", {"agent_id": coder_id}, nid())
+assert cstats["credits_balance"] == 0 and cstats["tasks_verified"] == 0, cstats
 print("no-self-verification ok")
 
 call("playgrounds_verify_task", {"verifier_agent_id": writer_id, "task_id": htid,
