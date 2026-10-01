@@ -56,7 +56,7 @@ for s in (-1,1):
         for dz,w,d in rings:
             for j in range(12):
                 a=j*math.tau/12
-                verts.append((s*(.33+dz*.23)+math.cos(a)*w*(.64 if inner else 1),(-.085 if inner else .005)+math.sin(a)*d*(.35 if inner else 1),z0+dz*(.72 if inner else 1)))
+                verts.append((s*(.33+dz*.23)+math.cos(a)*w*(.64 if inner else 1),(-.065+dz*.08 if inner else .005)+math.sin(a)*d*(.35 if inner else 1),z0+dz*(.72 if inner else 1)))
         for k in range(4):
             for j in range(12):
                 a=k*12+j;b=k*12+(j+1)%12;faces.append((a,b,b+12,a+12))

@@ -41,7 +41,7 @@ disabled because this distro build lacks OpenImageDenoiser. No GPU required.
 Front, three-quarter, and posed side previews cover ear taper, ivory cheek patches,
 small embroidered mouth, headphone contact and swept ivory-tipped tail. First
 inspection caught foot-patch intersections and angular tail silhouette; corrected
-before final renders. Further artistry: softer cheek transitions, true short pile,
+before final renders; side inspection also caught and corrected detached ear insets. Further artistry: softer cheek transitions, true short pile,
 sewn seams and better paw articulation. This prototype intentionally does not claim
 to have reached the concept image's dense photographic fur.
 
