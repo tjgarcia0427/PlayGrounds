@@ -8,7 +8,6 @@ import {join,resolve} from 'node:path';
 import {randomBytes} from 'node:crypto';
 const chrome=process.env.CHROME_PATH;
 assert.ok(chrome&&existsSync(chrome),'Explicit Google Chrome path required');
-assert.ok(process.env.ROOM_BACKEND_ROOT,'Pinned room backend required');
 const base='http://127.0.0.1:8496', temp=mkdtempSync(join(tmpdir(),'pg-real-ui-'));
 const operator=randomBytes(24).toString('hex'), secrets=[operator], errors=[], urls=[], assetFailures=[];
 const server=spawn('python3',['mvp/browser-qa/room_backend.py'],{env:{...process.env,PLAYGROUNDS_STATE_PATH:join(temp,'state.json'),PLAYGROUNDS_PORT:'8496',PLAYGROUNDS_OPERATOR_TOKEN:operator},stdio:'ignore'});

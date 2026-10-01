@@ -38,6 +38,9 @@ jobs:
       - name: Audit regressions
         run: python3 mvp/test_audit.py
 
+      - name: Secure rooms regressions
+        run: python3 mvp/test_rooms.py
+
       - name: Mini-games engine + HTTP API regressions
         run: python3 mvp/test_games.py
 
@@ -124,21 +127,15 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          ref: d766e08e14d61587d43728b1c21260d7ee6bdf8f
-          path: .qa-room-backend
-          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Real room-backend compatibility (not security approval)
+      - name: Native room backend and UI integration
         env:
           CHROME_PATH: /usr/bin/google-chrome
-          ROOM_BACKEND_ROOT: .qa-room-backend
         run: |
           npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
           node mvp/browser-qa/room-real.mjs

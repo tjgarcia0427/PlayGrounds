@@ -360,16 +360,16 @@ class Integration(unittest.TestCase):
 
     def test_01_agent_cap_409(self):
         ids = []
-        for i in range(4):
+        for i in range(24):
             code, res = http("POST", "/api/agents/register",
                              {"name": f"Bot{i}", "capabilities": ["coding"],
                               "model": "gpt-4o-mini"})
             self.assertEqual(code, 200, res)
             ids.append(res["id"])
             self.assertTrue(res["agent"]["plush"].startswith("plush"))
-        code, res = http("POST", "/api/agents/register", {"name": "Bot4"})
+        code, res = http("POST", "/api/agents/register", {"name": "Bot24"})
         self.assertEqual(code, 409)
-        self.assertEqual(res["max_agents"], 4)
+        self.assertEqual(res["max_agents"], 24)
         self.__class__.agents = ids
 
     def test_02_full_lifecycle(self):

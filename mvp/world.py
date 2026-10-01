@@ -4,7 +4,7 @@ This module is NOT authentication or tenant isolation. Social messages are data,
 never model prompts or tool instructions executed by the server.
 """
 MAX_REGISTERED = 64
-CLASSROOM_CAP = 4
+CLASSROOM_CAP = 24
 SOCIAL_LIMIT = 256
 
 
