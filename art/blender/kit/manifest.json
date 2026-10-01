@@ -1,0 +1,468 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "peach-fox",
+      "kind": "character",
+      "description": "fox companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 834696,
+      "triangles": 18568,
+      "meshes": 9,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.449,
+          0.0
+        ],
+        [
+          0.8089,
+          0.4924,
+          1.8293
+        ]
+      ],
+      "sha256": "f6b0e730ce59a253fcd470d215eb52f43baae80994a9be3c4de1bca33aeec258"
+    },
+    {
+      "id": "lilac-owl",
+      "kind": "character",
+      "description": "owl companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 653724,
+      "triangles": 14224,
+      "meshes": 8,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.4065,
+          0.0
+        ],
+        [
+          0.599,
+          0.353,
+          1.8199
+        ]
+      ],
+      "sha256": "ad846d2744a0d17a65f9a4261976b94de7e613f8755aa73f7b2bb11fe3b6bd5b"
+    },
+    {
+      "id": "mint-bunny",
+      "kind": "character",
+      "description": "bunny companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 686124,
+      "triangles": 15216,
+      "meshes": 9,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.449,
+          0.0
+        ],
+        [
+          0.599,
+          0.43,
+          2.0971
+        ]
+      ],
+      "sha256": "66b92d78272375a05d94cee2c93456f9136be1a4c6414d5de1c4f7ba1af76461"
+    },
+    {
+      "id": "sky-bear",
+      "kind": "character",
+      "description": "bear companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 686092,
+      "triangles": 15216,
+      "meshes": 9,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.449,
+          0.0
+        ],
+        [
+          0.599,
+          0.353,
+          1.802
+        ]
+      ],
+      "sha256": "86f7dbe083bc562b9c6c6d2f3d031cd7a15a5c19e9746c996ca7bc74ce259989"
+    },
+    {
+      "id": "buttercup-bear",
+      "kind": "character",
+      "description": "bear companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 686100,
+      "triangles": 15216,
+      "meshes": 9,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.449,
+          0.0
+        ],
+        [
+          0.599,
+          0.353,
+          1.802
+        ]
+      ],
+      "sha256": "5486c44ba34722def1b7e2f80050d6a9997341bd78c101ed76828ae92988f4ea"
+    },
+    {
+      "id": "rose-fox",
+      "kind": "character",
+      "description": "fox companion \u00b7 original velour geometry, headphones and study motion",
+      "bytes": 818512,
+      "triangles": 18568,
+      "meshes": 9,
+      "boundsZUp": [
+        [
+          -0.599,
+          -0.449,
+          0.0
+        ],
+        [
+          0.8089,
+          0.4924,
+          1.8293
+        ]
+      ],
+      "sha256": "2c6e3b486b7b8c66cb4d56a1205ae90ec4592f1d319c8538fc07cb0c65928a4e"
+    },
+    {
+      "id": "slide",
+      "kind": "playground",
+      "description": "Original rounded slide module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 535428,
+      "triangles": 10132,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.77,
+          -2.4537,
+          0.08
+        ],
+        [
+          0.77,
+          2.4075,
+          2.62
+        ]
+      ],
+      "sha256": "b5fb885a8cf81a77758c7efb95e16cd49bc640392bbd9e0d705f9c56c870cdff"
+    },
+    {
+      "id": "merry-go-round",
+      "kind": "playground",
+      "description": "Original rounded merry go round module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 278184,
+      "triangles": 2756,
+      "meshes": 2,
+      "boundsZUp": [
+        [
+          -1.13,
+          -1.13,
+          0.0
+        ],
+        [
+          1.13,
+          1.13,
+          1.0066
+        ]
+      ],
+      "sha256": "c689c41b77f7799446b47dc316162b630c656c9d0fa95414b6e9e0f61b986691"
+    },
+    {
+      "id": "monkey-bars",
+      "kind": "playground",
+      "description": "Original rounded monkey bars module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 305384,
+      "triangles": 6084,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.667,
+          -1.237,
+          0.08
+        ],
+        [
+          0.667,
+          1.237,
+          2.537
+        ]
+      ],
+      "sha256": "b8c93a38bfe21df6dafe87f2e7a305eaca4f274bc62953bfa1d6874d865f334b"
+    },
+    {
+      "id": "campus-gate",
+      "kind": "playground",
+      "description": "Original rounded campus gate module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 647168,
+      "triangles": 11568,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -1.8592,
+          -0.2708,
+          -0.0
+        ],
+        [
+          1.863,
+          0.262,
+          2.88
+        ]
+      ],
+      "sha256": "936857a1e653e850572f81414174bee15be6b2034c0f800f00a6ef4bea27ca26"
+    },
+    {
+      "id": "shared-table",
+      "kind": "study-hall",
+      "description": "Original rounded shared table module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 542788,
+      "triangles": 8556,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -1.275,
+          -0.56,
+          0.05
+        ],
+        [
+          1.275,
+          0.56,
+          1.5116
+        ]
+      ],
+      "sha256": "8a943b595046b8165aa12d8b509e0ce73ffc3c8ba30c0e87dc301bd166fb5ed5"
+    },
+    {
+      "id": "round-table",
+      "kind": "study-hall",
+      "description": "Original rounded round table module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 461200,
+      "triangles": 6672,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.87,
+          -0.87,
+          0.0
+        ],
+        [
+          0.87,
+          0.87,
+          1.587
+        ]
+      ],
+      "sha256": "6d67015ad35866305119392c8b4d2e8644ecc4933339f9df4afd89521ef624f9"
+    },
+    {
+      "id": "chair",
+      "kind": "study-hall",
+      "description": "Original rounded chair module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 233200,
+      "triangles": 1504,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.33,
+          -0.3,
+          0.04
+        ],
+        [
+          0.33,
+          0.305,
+          1.305
+        ]
+      ],
+      "sha256": "5f6c949cc1fd8175e7b62eee4f44fd07777aa390a1c011e9270917efcd42f5f8"
+    },
+    {
+      "id": "sofa",
+      "kind": "study-hall",
+      "description": "Original rounded sofa module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 287060,
+      "triangles": 2832,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -1.145,
+          -0.43,
+          0.0
+        ],
+        [
+          1.145,
+          0.445,
+          1.185
+        ]
+      ],
+      "sha256": "3334d475643a24e283fc852ae0bbcb8ac3990d40784d9642c39bffba3d593a32"
+    },
+    {
+      "id": "coffee-bar",
+      "kind": "study-hall",
+      "description": "Original rounded coffee bar module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 542144,
+      "triangles": 8456,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -1.16,
+          -0.429,
+          -0.0
+        ],
+        [
+          1.16,
+          0.42,
+          1.72
+        ]
+      ],
+      "sha256": "78dcb3139c56896f42ce3b84f17725e88a295520b2d06d4e7b83eee5358ef41e"
+    },
+    {
+      "id": "laptop",
+      "kind": "study-hall",
+      "description": "Original rounded laptop module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 399792,
+      "triangles": 6016,
+      "meshes": 2,
+      "boundsZUp": [
+        [
+          -0.28,
+          -0.2,
+          0.0
+        ],
+        [
+          0.28,
+          0.2,
+          0.465
+        ]
+      ],
+      "sha256": "8382861b3be4371ea8f045175c16afc3319beda7eaa7ca1fa7a1e5f3ea3512af"
+    },
+    {
+      "id": "bookshelf",
+      "kind": "study-hall",
+      "description": "Original rounded bookshelf module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 739472,
+      "triangles": 14176,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.6925,
+          -0.23,
+          0.0
+        ],
+        [
+          0.6925,
+          0.23,
+          2.2743
+        ]
+      ],
+      "sha256": "fa1480064a09eaaff222b93f139e538f455ce50af66dea83337ed4fde07d854e"
+    },
+    {
+      "id": "planter",
+      "kind": "study-hall",
+      "description": "Original rounded planter module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 370784,
+      "triangles": 4964,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.6507,
+          -0.6094,
+          0.0
+        ],
+        [
+          0.6592,
+          0.5896,
+          1.5373
+        ]
+      ],
+      "sha256": "aba0727b4f75bc003189353ea49e9e4f9ced0865fe48380e57fb00b099cbefc7"
+    },
+    {
+      "id": "reading-lamp",
+      "kind": "study-hall",
+      "description": "Original rounded reading lamp module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 222512,
+      "triangles": 1320,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.43,
+          -0.43,
+          0.0
+        ],
+        [
+          0.43,
+          0.43,
+          1.89
+        ]
+      ],
+      "sha256": "088e4afcf38d9e94e01f930f8c9568b745a2f18d103450d51044b2bd3857a41b"
+    },
+    {
+      "id": "wall-art",
+      "kind": "study-hall",
+      "description": "Original rounded wall art module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 215508,
+      "triangles": 1696,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.65,
+          -0.099,
+          0.0
+        ],
+        [
+          0.65,
+          0.04,
+          1.2
+        ]
+      ],
+      "sha256": "e5a127334604570372d22f87eef26e93c19ada532a0f0503c038ab4cfad89744"
+    },
+    {
+      "id": "garden-tree",
+      "kind": "playground",
+      "description": "Original rounded garden tree module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 229920,
+      "triangles": 1792,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -0.87,
+          -0.57,
+          0.0
+        ],
+        [
+          0.89,
+          0.57,
+          2.62
+        ]
+      ],
+      "sha256": "01a35dfd6524d24b28eb0c1ca3d602d65720c48328591c7a2589a3788424d15a"
+    },
+    {
+      "id": "rug",
+      "kind": "study-hall",
+      "description": "Original rounded rug module; ground-centered, Blender Z-up to glTF Y-up",
+      "bytes": 316944,
+      "triangles": 3008,
+      "meshes": 1,
+      "boundsZUp": [
+        [
+          -1.1877,
+          -0.75,
+          0.0
+        ],
+        [
+          1.1877,
+          0.75,
+          0.061
+        ]
+      ],
+      "sha256": "d370de39f3323cf368bd264a969f54409e0b655b083610b961442fea1b96977b"
+    }
+  ],
+  "runtimeIntegrated": false
+}
