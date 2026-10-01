@@ -15,7 +15,7 @@ for y in range(128):
         nx=.15*math.sin(x*math.pi/2)+random.uniform(-.07,.07)
         ny=.15*math.sin(y*math.pi/2)+random.uniform(-.07,.07)
         pixels.extend((.5+nx,.5+ny,1,1))
-img.pixels=pixels; img.colorspace_settings.name='Non-Color'; img.pack()
+img.colorspace_settings.name='Non-Color'; img.pixels=pixels; img.update(); img.pack()
 def mat(name,hex,cloth=False,rough=.8):
     m=bpy.data.materials.new(name); m.use_nodes=True
     c=tuple(int(hex[i:i+2],16)/255 for i in (0,2,4))
@@ -132,7 +132,7 @@ triangles=sum(sum(len(p.vertices)-2 for p in o.data.polygons) for o in root.chil
 # CPU studio previews, not screenshots of the app.
 floor=mat('Studio ivory','ece4dc')
 bpy.ops.mesh.primitive_plane_add(size=200);bpy.context.object.data.materials.append(floor)
-scene.render.engine='CYCLES';scene.cycles.device='CPU';scene.cycles.samples=96;scene.cycles.use_denoising=False
+scene.render.engine='CYCLES';scene.cycles.device='CPU';scene.cycles.samples=32;scene.cycles.use_denoising=False
 scene.world.color=(.25,.25,.25)
 def aim(o,point):o.rotation_euler=(Vector(point)-o.location).to_track_quat('-Z','Y').to_euler()
 for name,loc,power,size in [('Key',(-3,-4,5),450,4),('Fill',(3,-2,3),250,3),('Rim',(1,3,4),450,3)]:

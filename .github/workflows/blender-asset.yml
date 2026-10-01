@@ -1,7 +1,7 @@
 name: Blender asset contract
 on:
   pull_request:
-    paths: ['art/blender/**', 'mvp/browser-qa/blender-kit-check.mjs', '.github/workflows/blender-asset.yml']
+    paths: ['art/blender/**', 'mvp/browser-qa/blender-kit-check.mjs', 'mvp/browser-qa/validate-blender-kit.mjs', 'mvp/browser-qa/package*.json', '.github/workflows/blender-asset.yml']
 permissions:
   contents: read
 jobs:
@@ -28,6 +28,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Khronos glTF format validator
+        run: node mvp/browser-qa/validate-blender-kit.mjs
       - name: Actual exported GLBs, desktop/mobile, motion and fallback
         env:
           CHROME_PATH: /usr/bin/google-chrome

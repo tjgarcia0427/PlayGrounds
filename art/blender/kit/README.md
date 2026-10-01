@@ -38,8 +38,20 @@ blender -b -t 3 -P art/blender/kit/build.py -- sheets props
 Render sheets import the delivered GLBs. Character order is the list above;
 prop sheet front-to-back, left-to-right follows the manifest's non-character order.
 Props are scale-normalized in sheets/collections; individual assets retain scale.
-CPU previews use bounded threads/samples, no denoiser (the distro build lacks
+CPU previews use bounded threads and 32 samples, no denoiser (the distro build lacks
 OpenImageDenoiser). Fine image grain includes remaining render noise, not fur.
+
+The formal Khronos `gltf-validator` 2.0.0-dev.3.10 is pinned in the browser QA
+lockfile and checks all 22 GLBs with errors **and warnings** treated as failures.
+Triangulation and exported tangent frames preserve the fabric normal-map basis.
+Informational unused UVs/empty attachment nodes are retained intentionally.
+
+Visual QA caught a valid-but-black normal image: setting Blender image color space
+after assigning pixels reset generated image data. Color space now precedes pixel
+assignment/update/packing, and Chrome checks decoded normal pixels (neutral red/green,
+positive blue). A format-only validator cannot establish this material correctness.
+The original fox generator is corrected too; its views are refreshed, not silently
+reused. Final GLBs total approximately10.7MB; characters are each under0.84MB.
 
 The original fox study remains in `../fox/` for comparison. The kit fox reduces
 32,208 triangles / 34 meshes to 18,568 triangles / 9 joint-batched meshes, with

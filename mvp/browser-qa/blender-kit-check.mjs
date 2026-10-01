@@ -22,9 +22,9 @@ try{
    await page.screenshot({path:path.join(out,group+'-collection.png'),fullPage:true});
    for(const a of manifest.assets.filter(a=>a.kind===group)){
      await page.locator(`[data-id="${a.id}"]`).click();await page.waitForFunction(id=>window.assetQA.ready&&window.assetQA.ids.length===1&&window.assetQA.ids[0]===id,a.id);
-     await page.waitForFunction(()=>window.assetQA.drawCalls>0&&window.assetQA.poses.length===1);
-     const before=await page.evaluate(()=>structuredClone(window.assetQA));assert.equal(before.error,null,a.id);assert(before.drawCalls<40,`${a.id} excessive draws ${before.drawCalls}`);
-     metrics.push({id:a.id,drawCalls:before.drawCalls,triangles:a.triangles,bytes:a.bytes});
+     await page.waitForFunction(id=>window.assetQA.drawCalls>0&&window.assetQA.poses.length===1&&window.assetQA.poses[0].id===id,a.id);
+     const before=await page.evaluate(()=>structuredClone(window.assetQA));assert.equal(before.error,null,a.id);for(const rgb of before.normalMaps)assert(rgb[0]>90&&rgb[0]<170&&rgb[1]>90&&rgb[1]<170&&rgb[2]>220,a.id+' invalid decoded normal pixels '+rgb);assert(before.drawCalls<40,`${a.id} excessive draws ${before.drawCalls}`);
+     metrics.push({id:a.id,drawCalls:before.drawCalls,triangles:a.triangles,bytes:a.bytes});console.log('Rendered GLB',a.id,before.drawCalls,'draw calls');
      await page.screenshot({path:path.join(out,a.id+'.png'),fullPage:true});
      if(a.kind==='character'){
        await page.waitForFunction(old=>JSON.stringify(window.assetQA.poses[0].head)!==JSON.stringify(old.head)&&JSON.stringify(window.assetQA.poses[0].tail)!==JSON.stringify(old.tail),before.poses[0]);

@@ -27,7 +27,8 @@ def material(name,color,cloth=False,rough=.72):
                 for x in range(n):
                     nx=.10*math.sin(x*2.1+y*.35)+rng.uniform(-.08,.08);ny=.12*math.cos(y*2.2)+rng.uniform(-.08,.08)
                     pixels.extend((.5+nx,.5+ny,math.sqrt(max(0,1-nx*nx-ny*ny)),1))
-            img.pixels=pixels;img.colorspace_settings.name='Non-Color';img.pack()
+            img.colorspace_settings.name='Non-Color';img.pixels=pixels;img.update();img.pack()
+            assert .25<img.pixels[0]<.75 and img.pixels[2]>.9, 'Normal texture pixels were lost'
         tex=m.node_tree.nodes.new('ShaderNodeTexImage');tex.image=img
         normal=m.node_tree.nodes.new('ShaderNodeNormalMap');normal.inputs['Strength'].default_value=.4
         m.node_tree.links.new(tex.outputs['Color'],normal.inputs['Color']);m.node_tree.links.new(normal.outputs['Normal'],p.inputs['Normal'])
@@ -83,10 +84,17 @@ def export_asset(root,key,kind,description):
             bpy.ops.object.select_all(action='DESELECT');o.select_set(True);bpy.context.view_layer.objects.active=o
             bpy.ops.object.mode_set(mode='EDIT');bpy.ops.mesh.select_all(action='SELECT');bpy.ops.uv.smart_project();bpy.ops.object.mode_set(mode='OBJECT')
     merge_static_children(root)
+    # Tangent generation requires triangulated meshes, including beveled prop ngons.
+    for o in root.children_recursive:
+        if o.type=='MESH':
+            bpy.context.view_layer.objects.active=o
+            mod=o.modifiers.new('Portable triangulation','TRIANGULATE')
+            mod.keep_custom_normals=True
+            bpy.ops.object.modifier_apply(modifier=mod.name)
     bpy.ops.object.select_all(action='DESELECT');root.select_set(True)
     for o in root.children_recursive:o.select_set(True)
     bpy.context.view_layer.objects.active=root
-    path=ASSETS/(key+'.glb');bpy.ops.export_scene.gltf(filepath=str(path),export_format='GLB',use_selection=True,export_animations=True,export_force_sampling=True,export_extras=True)
+    path=ASSETS/(key+'.glb');bpy.ops.export_scene.gltf(filepath=str(path),export_format='GLB',use_selection=True,export_animations=True,export_force_sampling=True,export_extras=True,export_tangents=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(ASSETS/(key+'.blend')))
     triangles=sum(len(p.vertices)-2 for o in root.children_recursive if o.type=='MESH' for p in o.data.polygons)
     bpy.context.view_layer.update();pts=[o.matrix_world@Vector(c) for o in root.children_recursive if o.type=='MESH' for c in o.bound_box]

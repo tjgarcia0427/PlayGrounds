@@ -4,16 +4,16 @@ import {animateCharacter} from '/mvp/assets/campus-animation.js';
 const stage=document.querySelector('.stage'),status=document.querySelector('#status'),still=document.querySelector('#still'),motion=document.querySelector('#motion');
 const reduced=matchMedia('(prefers-reduced-motion: reduce)');
 const manifest=await (await fetch('../manifest.json')).json();
-let renderer,scene,camera,content,mixers=[],directors=[],loaded=[],generation=0,currentGroup='character',currentId=null,clock=0,last=performance.now(),ready=false;
+let renderer,scene,camera,content,floor,mixers=[],directors=[],loaded=[],generation=0,currentGroup='character',currentId=null,clock=0,last=performance.now(),ready=false;
 const cache=new Map(),loader=new GLTFLoader();
 const title=id=>id.split('-').map(s=>s[0].toUpperCase()+s.slice(1)).join(' ');
-const diagnostic={ready:false,error:null,group:currentGroup,ids:[],clock:0,poses:[],drawCalls:0};
+const diagnostic={ready:false,error:null,group:currentGroup,ids:[],clock:0,poses:[],drawCalls:0,normalMaps:[]};
 window.assetQA=diagnostic; // Read-only observation surface; controls remain public DOM.
 try{
  renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setClearColor('#eee6de');renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;
  stage.append(renderer.domElement);renderer.domElement.setAttribute('aria-label','Exported Blender assets');scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(35,1,.01,150);
  scene.add(new THREE.HemisphereLight('#fff7ec','#b5a4b8',2.5));const key=new THREE.DirectionalLight('#fff3e4',3.2);key.position.set(-3,5,4);scene.add(key);const fill=new THREE.DirectionalLight('#e2eaff',1.7);fill.position.set(4,3,-3);scene.add(fill);
- const floor=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#e8dfd5',roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=-.025;scene.add(floor);
+ floor=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:'#e8dfd5',roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=-.025;scene.add(floor);
  content=new THREE.Group();scene.add(content);new ResizeObserver(resize).observe(stage);
  renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();fallback('WebGL context lost. Downloads remain available.');});
 }catch(error){fallback('WebGL unavailable. Downloads remain available.');}
@@ -21,9 +21,13 @@ function fallback(text){ready=false;diagnostic.error=text;document.querySelector
 function resize(){if(!renderer)return;const w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();if(ready)frame();}
 function frame(){
  const box=new THREE.Box3().setFromObject(content),center=box.getCenter(new THREE.Vector3()),size=box.getSize(new THREE.Vector3());
- const angle={front:0,quarter:.52,side:Math.PI/2,back:Math.PI}[document.querySelector('#view').value];
+ const angle={front:0,quarter:currentId ? .52 : .10,side:Math.PI/2,back:Math.PI}[document.querySelector('#view').value];
  const span=Math.max(size.y,size.x/camera.aspect,size.z*.75,.3),distance=span/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)))*1.4;
- camera.position.set(center.x+Math.sin(angle)*distance,center.y+distance*.20,center.z+Math.cos(angle)*distance);camera.lookAt(center);camera.updateProjectionMatrix();
+ camera.position.set(center.x+Math.sin(angle)*distance,center.y+distance*(currentId ? .20 : .015),center.z+Math.cos(angle)*distance);camera.lookAt(center);camera.updateProjectionMatrix();
+}
+function normalMapStats(resources){
+ const textures=new Set();for(const resource of resources)resource.scene.traverse(o=>{if(o.isMesh)for(const m of [].concat(o.material))if(m.normalMap)textures.add(m.normalMap);});
+ return [...textures].map(texture=>{const c=document.createElement('canvas');c.width=c.height=32;const ctx=c.getContext('2d');ctx.drawImage(texture.image,0,0,32,32);const pixels=ctx.getImageData(0,0,32,32).data;const avg=[0,0,0];for(let i=0;i<pixels.length;i+=4)for(let k=0;k<3;k++)avg[k]+=pixels[i+k]/1024;return avg;});
 }
 function list(){const host=document.querySelector('.assets');host.replaceChildren();for(const a of manifest.assets.filter(a=>a.kind===currentGroup)){
  const button=document.createElement('button');button.dataset.id=a.id;button.setAttribute('aria-pressed',String(currentId===a.id));button.append(document.createTextNode(title(a.id)));const small=document.createElement('small');small.textContent=`${(a.triangles/1000).toFixed(1)}k triangles`;button.append(small);button.onclick=()=>show(a.id);host.append(button);
@@ -42,11 +46,11 @@ async function show(id=null){
  for(const d of directors)d.dispose();for(const m of mixers){m.stopAllAction();m.uncacheRoot(m.getRoot());}directors=[];mixers=[];loaded=[];content.clear();clock=0;
  for(let i=0;i<entries.length;i++){
    const a=entries[i],resource=resources[i],object=resource.scene.clone(true),pivot=new THREE.Group();pivot.add(object);content.add(pivot);
-   if(!id){const box=new THREE.Box3().setFromObject(object),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());const scale=currentGroup==='character'?1:1.6/Math.max(size.x,size.y,size.z);object.scale.setScalar(scale);object.position.set(-center.x*scale,-box.min.y*scale,-center.z*scale);const cols=currentGroup==='character'?3:4;pivot.position.set((i%cols-(Math.min(cols,entries.length)-1)/2)*1.9,0,Math.floor(i/cols)*2.2);}
+   if(!id){const box=new THREE.Box3().setFromObject(object),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());const scale=currentGroup==='character'?1:1.6/Math.max(size.x,size.y,size.z);object.scale.setScalar(scale);object.position.set(-center.x*scale,-box.min.y*scale,-center.z*scale);const cols=currentGroup==='character'?3:4;pivot.position.set((i%cols-(Math.min(cols,entries.length)-1)/2)*2.05,-Math.floor(i/cols)*2.45,0);}
    const mixer=new THREE.AnimationMixer(object);for(const clip of resource.animations)mixer.clipAction(clip).play();mixers.push(mixer);
    directors.push(a.kind==='character'?animateCharacter(object):{update(){},dispose(){}});loaded.push({object,a,resource});
  }
- applyMotion();ready=true;diagnostic.ready=true;diagnostic.ids=entries.map(a=>a.id);diagnostic.group=currentGroup;frame();status.textContent=`${entries.length} exported ${entries.length===1?'asset':'assets'} ready · ${reduced.matches?'reduced motion':'synthetic study'}`;
+ floor.visible=Boolean(id);diagnostic.normalMaps=normalMapStats(resources);applyMotion();ready=true;diagnostic.ready=true;diagnostic.ids=entries.map(a=>a.id);diagnostic.group=currentGroup;frame();status.textContent=`${entries.length} exported ${entries.length===1?'asset':'assets'} ready · ${reduced.matches?'reduced motion':'synthetic study'}`;
  }catch(error){fallback('Asset load failed: '+error.message);}
 }
 function applyMotion(){for(let i=0;i<loaded.length;i++){
