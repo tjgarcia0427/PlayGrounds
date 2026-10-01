@@ -153,6 +153,7 @@
 </div></div></main>
 <dialog id="roomDialog" aria-labelledby="dialogTitle"><form id="roomForm"><h2 id="dialogTitle"></h2><div id="dialogContent"></div><p id="dialogError" role="alert" tabindex="-1"></p><div class="dialog-actions"><button type="button" id="dialogCancel">Close</button><button id="dialogSubmit" type="submit">Continue</button></div></form></dialog>
 <script src="/assets/room-ui.js"></script>
+<script src="/assets/invites.js"></script>
 <script>
 function escapeHtml(x){ return String(x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function updateMarkup(id, html) {
