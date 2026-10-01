@@ -10,14 +10,17 @@ const server=spawn('python3',['mvp/browser-qa/fixture_server.py'],{env:{...proce
 async function api(path,body,status=200){const r=await fetch(base+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});assert.equal(r.status,status,await r.clone().text());return r.json()}
 try{
  let ready=false;for(let i=0;i<50;i++){try{await api('/api/policy');ready=true;break}catch{await new Promise(r=>setTimeout(r,100))}}assert.ok(ready);
- const agents=[];for(const name of ['Peach (QA)','Lilac (QA)','Mint (QA)','Sky (QA)','Waiting (QA)'])agents.push(await api('/api/agents/register',{name,space:'playground'}));
- const goal=await api('/api/goals',{title:'A cozy collaborative pilot (QA)',budget:100}),tasks=[];
- for(let i=0;i<5;i++){const t=await api(`/api/goals/${goal.id}/tasks`,{title:['Welcome companions','Review room safety','Arrange the study nook','Test mobile navigation','Next contribution'][i],bounty:10});tasks.push(t);await api(`/api/tasks/${t.id}/claim`,{agent_id:agents[i].id},i===4?409:200)}
+ const capacity=(await api('/api/world')).limits.classroom_per_goal;
+ assert.ok(Number.isInteger(capacity)&&capacity>=2&&capacity<64,'usable server-advertised capacity');
+ const names=['Peach (QA)','Lilac (QA)','Mint (QA)','Sky (QA)'];
+ const agents=[];for(let i=0;i<=capacity;i++)agents.push(await api('/api/agents/register',{name:names[i]||`Companion ${i+1} (QA)`,space:'playground'}));
+ const goal=await api('/api/goals',{title:'A cozy collaborative pilot (QA)',budget:(capacity+1)*10}),tasks=[];
+ for(let i=0;i<=capacity;i++){const t=await api(`/api/goals/${goal.id}/tasks`,{title:['Welcome companions','Review room safety','Arrange the study nook','Test mobile navigation','Next contribution'][i]||`Contribution ${i+1}`,bounty:10});tasks.push(t);await api(`/api/tasks/${t.id}/claim`,{agent_id:agents[i].id},i===capacity?409:200)}
  browser=await chromium.launch({executablePath:chrome,headless:true,chromiumSandbox:true});const page=await browser.newPage({viewport:{width:1440,height:1100}});page.setDefaultTimeout(30000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
  // Disable the10s polling fallback: subsequent updates must arrive through real SSE.
  // WebGL is covered in separate jobs; this lane tests the accessible board directly.
  await page.addInitScript(()=>{const interval=window.setInterval;window.setInterval=(fn,delay,...args)=>delay===10000?0:interval(fn,delay,...args);const get=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,...args){return type.startsWith('webgl')?null:get.call(this,type,...args)}});
- await page.goto(base,{waitUntil:'domcontentloaded'});await page.click('#classTab');await page.waitForSelector('#workboard .wb-card');assert.equal(await page.locator('#workboard .wb-card').count(),4);assert.match(await page.locator('.wb-capacity').textContent(),/4 \/ 4.*Full.*no automatic waitlist/);
+ await page.goto(base,{waitUntil:'domcontentloaded'});await page.click('#classTab');await page.waitForSelector('#workboard .wb-card');assert.equal(await page.locator('#workboard .wb-card').count(),capacity);const capacityText=await page.locator('.wb-capacity').textContent();assert.ok(capacityText.includes(`${capacity} / ${capacity}`));assert.match(capacityText,/Full.*no automatic waitlist/);
  const card=page.locator(`[data-agent-id="${agents[0].id}"]`);
  await api(`/api/tasks/${tasks[0].id}/progress`,{agent_id:agents[0].id,note:'<img src=x onerror="window.boardInjected=true">',progress_pct:.35});
  await page.waitForFunction(()=>document.querySelector('#workboard progress')?.value===35);assert.equal(await page.locator('#workboard img').count(),0);assert.equal(await page.evaluate(()=>window.boardInjected),undefined);assert.match(await card.textContent(),/<img src=x/);
