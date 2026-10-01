@@ -51,11 +51,12 @@ class _FakeSSEHandler:
 
     _room_stream_valid = srv.Handler._room_stream_valid
     _room_stream_close = srv.Handler._room_stream_close
-    _room_stream_revalidate = srv.Handler._room_stream_revalidate
+    _room_sse_write = srv.Handler._room_sse_write
 
     def __init__(self, token):
         self.headers = {"Authorization": "Bearer " + token}
         self.written = bytearray()
+        self.blocking_calls = []
         self.close_connection = False
         self.status = None
         self.connection = self
@@ -64,6 +65,9 @@ class _FakeSSEHandler:
 
     def settimeout(self, t):
         pass
+
+    def setblocking(self, flag):
+        self.blocking_calls.append(flag)
 
     def send_response(self, code):
         self.status = code
@@ -82,6 +86,36 @@ class _FakeSSEHandler:
 
     def _send(self, code, obj):
         self.status = code
+
+
+class _BlockingWriteSSEHandler(_FakeSSEHandler):
+    """Fake SSE handler whose first socket write blocks until released,
+    modelling a slow in-flight write while the handler sits inside the
+    gate+write critical section (holding the global lock)."""
+
+    def __init__(self, token):
+        super().__init__(token)
+        import threading
+        self.write_entered = threading.Event()
+        self.write_release = threading.Event()
+        self._writes = 0
+
+    def write(self, b):
+        self._writes += 1
+        if self._writes == 1:
+            self.write_entered.set()
+            self.write_release.wait(timeout=10)
+        self.written.extend(b)
+
+
+class _SocketPairSSEHandler(_FakeSSEHandler):
+    """Fake SSE handler backed by a real socketpair: models a slow client
+    whose receive buffer is full and that never reads."""
+
+    def __init__(self, token, sock):
+        super().__init__(token)
+        self.connection = sock
+        self.wfile = sock.makefile("wb")
 
 
 class _RevokingSSEHandler(_FakeSSEHandler):
@@ -384,6 +418,167 @@ class RoomUnitTests(unittest.TestCase):
         self.assertNotIn(marks[2], written,
                          "replay write after revocation was delivered")
         self.assertTrue(fake.close_connection)
+
+    def test_sse_revocation_cannot_interleave_gate_and_write(self):
+        """Revocation is serialized with delivery: while the handler is
+        inside the gate+write critical section it holds the global lock,
+        so a revoker cannot land between the authorization check and the
+        socket write. Deterministic: the first write blocks until released.
+        """
+        import threading
+        from urllib.parse import urlparse
+        room, agent_id, token = self._sse_fixture("RaceSerial")
+        rid = room["id"]
+        room["events"] = [
+            {"seq": 1, "ts": "t", "type": "note", "data": {"mark": "SERIAL-1"}},
+        ]
+        fake = _BlockingWriteSSEHandler(token)
+        t = threading.Thread(
+            target=srv.Handler._room_sse,
+            args=(fake, rid,
+                  urlparse("/api/rooms/%s/events?since=0" % rid)),
+            daemon=True)
+        t.start()
+        self.assertTrue(fake.write_entered.wait(timeout=10),
+                        "handler never reached its first write")
+        # The handler is between the delivery gate and the socket write:
+        # revocation needs the same global lock, so it cannot interleave.
+        self.assertFalse(srv.lock.acquire(timeout=2),
+                         "global lock not held across gate+write: revocation "
+                         "could land between check and write")
+        fake.write_release.set()
+        # Let the handler reach its idle wait, then revoke and wake it with
+        # a late payload: the gate must drop it, never write it.
+        sub = None
+        deadline = time.monotonic() + 10
+        while sub is None and time.monotonic() < deadline:
+            with srv.lock:
+                for s, v in srv.subscribers.items():
+                    if v == rid:
+                        sub = s
+                        break
+            time.sleep(0.02)
+        self.assertIsNotNone(sub, "stream was never subscribed")
+        time.sleep(0.3)  # handler should be parked in sub.get() by now
+        with srv.lock:
+            srv._close_room_streams(rid, agent_id)
+        sub.put_nowait(b"data: {\"mark\": \"LIVE-AFTER-REVOKE\"}\n\n")
+        t.join(timeout=10)
+        self.assertFalse(t.is_alive(), "SSE handler thread did not terminate")
+        written = bytes(fake.written)
+        self.assertIn(b"SERIAL-1", written)
+        self.assertNotIn(b"LIVE-AFTER-REVOKE", written,
+                         "payload written after revocation was delivered")
+        self.assertTrue(fake.close_connection)
+
+    def test_sse_writes_are_nonblocking(self):
+        room, agent_id, token = self._sse_fixture("NonBlocking")
+        rid = room["id"]
+        room["events"] = [
+            {"seq": 1, "ts": "t", "type": "note", "data": {"mark": "NB-1"}},
+            {"seq": 2, "ts": "t", "type": "note", "data": {"mark": "NB-2"}},
+        ]
+
+        def revoke():
+            srv._close_room_streams(rid, agent_id)
+
+        fake = _RevokingSSEHandler(token, revoke)
+        self._run_sse_handler(fake, rid, since=0)
+        # Every payload write ran with the socket in non-blocking mode, so
+        # a slow client can never stall the server on a blocking write.
+        self.assertIn(False, fake.blocking_calls,
+                      "payload write did not switch the socket non-blocking")
+        written = bytes(fake.written)
+        self.assertIn(b"NB-1", written)
+        self.assertNotIn(b"NB-2", written,
+                         "replay write after revocation was delivered")
+
+    def test_sse_slow_client_cannot_stall_server(self):
+        """A client that never reads gets its stream closed promptly
+        instead of stalling the server: payload writes are non-blocking,
+        so a full client buffer surfaces BlockingIOError immediately."""
+        import socket
+        import threading
+        from urllib.parse import urlparse
+        room, agent_id, token = self._sse_fixture("SlowClient")
+        rid = room["id"]
+        room["events"] = [
+            {"seq": i + 1, "ts": "t", "type": "note",
+             "data": {"pad": "x" * 900, "mark": "SLOW-%d" % i}}
+            for i in range(60)
+        ]
+        srv_sock, cli_sock = socket.socketpair()
+        try:
+            cli_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            # Fill the client's receive buffer: a slow client that never
+            # reads.
+            srv_sock.setblocking(False)
+            try:
+                while True:
+                    srv_sock.send(b"x" * 65536)
+            except BlockingIOError:
+                pass
+            srv_sock.setblocking(True)
+            fake = _SocketPairSSEHandler(token, srv_sock)
+            t = threading.Thread(
+                target=srv.Handler._room_sse,
+                args=(fake, rid,
+                      urlparse("/api/rooms/%s/events?since=0" % rid)),
+                daemon=True)
+            start = time.monotonic()
+            t.start()
+            t.join(timeout=15)
+            elapsed = time.monotonic() - start
+            self.assertFalse(t.is_alive(),
+                             "SSE handler stuck on a slow client: delivery "
+                             "is not bounded")
+            self.assertLess(elapsed, 15)
+            self.assertTrue(fake.close_connection,
+                            "slow-client stream was not closed")
+            # The server lock was never held hostage by the slow client.
+            self.assertTrue(srv.lock.acquire(timeout=5))
+            srv.lock.release()
+        finally:
+            srv_sock.close()
+            cli_sock.close()
+
+    def test_lobby_sse_dict_registration_and_cleanup(self):
+        """Lobby /api/events must register subscriptions dict-style
+        (subscribers[sub] = None, sse_owner[sub] = None) and clean both up
+        on disconnect. The set-style regression raised AttributeError as
+        soon as the path was exercised."""
+        import threading
+        from urllib.parse import urlparse
+        fake = _FakeSSEHandler("unused")
+        t = threading.Thread(
+            target=srv.Handler._dispatch_get,
+            args=(fake, ["api", "events"],
+                  urlparse("/api/events?since=999999")),
+            daemon=True)
+        t.start()
+        sub = None
+        deadline = time.monotonic() + 10
+        while sub is None and time.monotonic() < deadline:
+            with srv.lock:
+                for s, v in srv.subscribers.items():
+                    if v is None and s in srv.sse_owner:
+                        sub = s
+                        break
+            time.sleep(0.02)
+        self.assertIsNotNone(sub, "lobby stream never registered dict-style")
+        with srv.lock:
+            self.assertIsNone(srv.subscribers[sub])
+            self.assertIsNone(srv.sse_owner[sub])
+            # Simulate disconnect: drop the subscription; the handler must
+            # notice on its next idle check and finish cleanup.
+            del srv.subscribers[sub]
+            del srv.sse_owner[sub]
+        t.join(timeout=20)
+        self.assertFalse(t.is_alive(),
+                         "lobby SSE handler did not terminate after drop")
+        with srv.lock:
+            self.assertNotIn(sub, srv.subscribers)
+            self.assertNotIn(sub, srv.sse_owner)
 
     def test_join_bucket_bounded(self):
         old_max = srv.JOIN_BUCKET_MAX

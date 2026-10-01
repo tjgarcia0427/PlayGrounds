@@ -260,9 +260,18 @@ def room_scope(room):
 
 
 def _public_lobby_state_locked():
-    """Public lobby snapshot. Call with lock held. Explicit allowlist: the
-    rooms registry, server_salt and idempotency records are excluded."""
-    return {k: state[k] for k in PUBLIC_STATE_KEYS if k in state}
+    """Public lobby snapshot. Call with lock held.
+
+    Positive allowlist: only the keys named in PUBLIC_STATE_KEYS are ever
+    exposed, so the rooms registry (member data, credential hashes, invite
+    records), server_salt and idempotency records can never leak through
+    this endpoint no matter what keys exist in state. ``games`` is
+    allowlisted as well but always replaced with the sanitized per-game
+    public view so current-round raw moves stay hidden."""
+    snap = {k: state[k] for k in PUBLIC_STATE_KEYS if k in state}
+    snap["games"] = {gid: games.public_view(g)
+                     for gid, g in state.get("games", {}).items()}
+    return snap
 
 
 def _public_room_state_locked(room):
@@ -1725,17 +1734,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, f.read(), "text/css; charset=utf-8")
             elif parsed.path == "/api/state":
                 with lock:
-                    snap = {k: v for k, v in state.items()
-                            if k not in ("server_salt", "idempotency",
-                                         "rooms")}
-                    # Sanitize games: current-round moves are never exposed on a
-                    # public read surface (see games.public_view). The rooms
-                    # registry (member data, credential hashes, invite records)
-                    # never leaves through this endpoint.
-                    snap["games"] = {
-                        gid: games.public_view(g)
-                        for gid, g in state["games"].items()}
-                    self._send(200, snap)
+                    # Explicit public-state allowlist (plus sanitized games);
+                    # the room registry and credential material stay private.
+                    self._send(200, _public_lobby_state_locked())
             elif parsed.path == "/api/world":
                 with lock:
                     self._send(200, world.snapshot(state))
@@ -1766,7 +1767,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     with lock:
                         replay = [ev for ev in state["events"] if ev["seq"] > since]
-                        subscribers.add(sub)
+                        subscribers[sub] = None
+                        sse_owner[sub] = None
                     self.connection.settimeout(20)
                     for ev in replay:
                         self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
@@ -1785,7 +1787,8 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 finally:
                     with lock:
-                        subscribers.discard(sub)
+                        subscribers.pop(sub, None)
+                        sse_owner.pop(sub, None)
             elif parsed.path == "/api/messages":
                 qs = parse_qs(parsed.query)
                 since = int(qs.get("since", [0])[0])
@@ -2413,19 +2416,32 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             return True
 
-    def _room_stream_revalidate(self, rid, token, agent_id, sub, gen):
-        """Post-dequeue revalidation for a room SSE subscription: under the
-        lock (never across wfile writes), confirm the stream is still
-        authorized AND its generation still matches the one captured at
-        subscription. A revocation that landed between the pre-check and the
-        dequeue — or during an earlier replay write — bumps the generation,
-        so the already-dequeued payload is dropped instead of delivered.
-        The lock is held only for the dict lookups; a slow client stalls
-        only its own handler thread, never the server."""
-        with lock:
-            if sse_gen.get(sub) != gen:
-                return False
-            return self._room_stream_valid(rid, token, agent_id, sub)
+    def _room_sse_write(self, payload):
+        """Write one SSE payload with bounded, non-blocking socket I/O.
+
+        The caller MUST hold the global lock: the final authorization gate
+        and this write run in a single critical section, so a revocation
+        (which also needs the lock) is serialized strictly before or after
+        delivery — a payload is never written after its stream's
+        authorization was revoked, and there is no seam between the gate
+        and the write for a revocation to land in.
+
+        The socket is switched to non-blocking for the write so a slow or
+        dead client cannot stall the server: if the client's receive buffer
+        is full the write raises BlockingIOError immediately instead of
+        blocking, and the caller closes the stream (the client reconnects
+        and replays from its last seq). Returns True when the payload was
+        fully handed to the socket, False when the client is not keeping
+        up."""
+        self.connection.setblocking(False)
+        try:
+            self.wfile.write(payload)
+            self.wfile.flush()
+        except BlockingIOError:
+            return False
+        finally:
+            self.connection.settimeout(20)
+        return True
 
     def _room_stream_close(self, sub):
         """Close a room SSE stream and purge any queued private payloads.
@@ -2455,9 +2471,14 @@ class Handler(BaseHTTPRequestHandler):
         Membership is revalidated before replay, after every dequeue and on
         every replay write, and on idle; a per-subscriber generation counter
         (bumped under lock on every revocation) closes the check-to-delivery
-        race, so a payload dequeued before member-removal or room-deletion
-        is dropped, never written. Revoked or deleted streams are closed
-        with their queued payloads purged."""
+        race: the final authorization gate and the socket write run in one
+        critical section under the global lock, so revocation is serialized
+        strictly before or after delivery and a payload dequeued before
+        member-removal or room-deletion is dropped, never written. The
+        write itself is non-blocking (see _room_sse_write), so a slow
+        client can never stall the server — its stream is closed instead.
+        Revoked or deleted streams are closed with their queued payloads
+        purged."""
         qs = parse_qs(parsed.query)
         try:
             since = int(qs.get("since", [0])[0])
@@ -2492,12 +2513,25 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.connection.settimeout(20)
             for ev in replay:
-                if not self._room_stream_revalidate(rid, token, agent_id,
-                                                    sub, gen):
-                    self._room_stream_close(sub)
-                    return True
-                self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-            self.wfile.flush()
+                payload = f"data: {json.dumps(ev)}\n\n".encode()
+                with lock:
+                    # Final delivery gate, evaluated INLINE (not via a
+                    # helper): the write below must immediately follow with
+                    # no calls in between, so a revocation — which needs
+                    # this same lock — cannot land between check and write.
+                    room = state["rooms"].get(rid)
+                    if not (sse_gen.get(sub) == gen
+                            and sub in subscribers
+                            and room is not None
+                            and agent_id in room.get("members", {})
+                            and room["auth"].get(token_hash(token)) == agent_id):
+                        self._room_stream_close(sub)
+                        return True
+                    if not self._room_sse_write(payload):
+                        # Slow/dead client: bounded delivery — drop the
+                        # stream instead of stalling the server.
+                        self._room_stream_close(sub)
+                        return True
             while True:
                 if not self._room_stream_valid(rid, token, agent_id, sub):
                     self._room_stream_close(sub)
@@ -2512,15 +2546,25 @@ class Handler(BaseHTTPRequestHandler):
                             self.close_connection = True
                             break
                     payload = b": ping\n\n"
-                # Revalidate AFTER dequeue: revocation may have landed while
-                # the payload sat in the queue. The lock is held only for the
-                # revalidation lookups, never across the write below.
-                if not self._room_stream_revalidate(rid, token, agent_id,
-                                                    sub, gen):
-                    self._room_stream_close(sub)
-                    return True
-                self.wfile.write(payload)
-                self.wfile.flush()
+                # Final delivery gate AFTER dequeue: revocation may have landed
+                # while the payload sat in the queue. The gate and the write
+                # share one critical section under the global lock — no
+                # calls between them — so revocation is serialized strictly
+                # before or after delivery and can never land in between.
+                with lock:
+                    room = state["rooms"].get(rid)
+                    if not (sse_gen.get(sub) == gen
+                            and sub in subscribers
+                            and room is not None
+                            and agent_id in room.get("members", {})
+                            and room["auth"].get(token_hash(token)) == agent_id):
+                        self._room_stream_close(sub)
+                        return True
+                    if not self._room_sse_write(payload):
+                        # Slow/dead client: bounded delivery — drop the
+                        # stream instead of stalling the server.
+                        self._room_stream_close(sub)
+                        return True
         except (OSError, TimeoutError):
             pass
         finally:
