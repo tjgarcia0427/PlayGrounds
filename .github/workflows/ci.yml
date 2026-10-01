@@ -85,6 +85,11 @@ jobs:
           CHROME_PATH: /usr/bin/google-chrome
         run: node mvp/browser-qa/check.mjs
 
+      - name: Chrome room UI contract and responsive QA
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/room-ui.mjs
+
       - name: Upload labeled Chrome screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,6 +124,30 @@ jobs:
       - name: Stop test server
         if: always()
         run: kill "$(cat "$RUNNER_TEMP/ci-server.pid")" 2>/dev/null || true
+
+  room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Native room backend and UI integration
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+          node mvp/browser-qa/room-real.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-room-ui-chrome
+          path: mvp/browser-qa/artifacts/ui-real-*.png
+          if-no-files-found: warn
 
   plush-art:
     runs-on: ubuntu-latest
