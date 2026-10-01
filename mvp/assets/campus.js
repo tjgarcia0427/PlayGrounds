@@ -1,4 +1,5 @@
 import * as THREE from './vendor/three.module.js';
+import {createArtKit} from './campus-art.js';
 import {hashId,spot,visualActivity,RENDER_LIMIT,CAMPUS,ANNEX_PROPS} from './campus-layout.js';
 
 import {createNavigator,DESK} from './campus-navigation.js';
@@ -31,7 +32,7 @@ function buildCampus() {
   renderer.toneMapping=THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure=1.0;
   renderer.shadowMap.enabled=true;
-  renderer.shadowMap.type=THREE.PCFShadowMap;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
   renderer.domElement.setAttribute('aria-label','3D toy garden and cutaway Study Hall; full agent details are available in the 2D view.');
   renderer.domElement.setAttribute('role','img');
   host.appendChild(renderer.domElement);
@@ -42,7 +43,8 @@ function buildCampus() {
   Object.assign(sun.shadow.camera,{left:-25,right:25,top:20,bottom:-20,near:1,far:60});
   sun.shadow.normalBias=.06;scene.add(sun);
   const rim=new THREE.DirectionalLight('#d1d9ff',1.1);rim.position.set(15,10,-12);scene.add(rim);
-  const route=createNavigator(),director=new InteractionDirector(route);
+  const route=createNavigator(),director=new InteractionDirector(route),art=createArtKit();
+  let portrait=false;const portraitButton=document.getElementById('portraitView');
   const materials=new Map();
   function mat(color) {
     if(!materials.has(color))materials.set(color,new THREE.MeshStandardMaterial({color,roughness:.88,metalness:0}));
@@ -50,7 +52,7 @@ function buildCampus() {
   }
   // Shared low-poly geometries reduce allocations and keep the toy silhouette soft.
   const sphere=new THREE.SphereGeometry(1,12,10);
-  const cube=new THREE.BoxGeometry(1,1,1);
+  const cube=art.rounded;
   const cylinder=new THREE.CylinderGeometry(1,1,1,16);
   function mesh(geometry,color,pos,scale,parent=scene) {
     const m=new THREE.Mesh(geometry,mat(color));m.position.set(...pos);m.scale.set(...scale);
@@ -150,6 +152,34 @@ function buildCampus() {
   box('#c69774',[1.1,1.1,-5.2],[1.25,2.2,.65]);
   const books=['#a9c9c3','#e6aca9','#d5c1e7','#e8cf85'];
   for(let row=0;row<3;row++)for(let b=0;b<4;b++)box(books[b],[.68+b*.27,.42+row*.63,-4.81],[.18,.4+(b%2)*.11,.2]);
+  // Warm library wall: shallow shelving behind the navigable floor. Repeated
+  // book colors use shared materials; reference images never become textures.
+  for(const x of [13.3,15.6]) {
+    box('#d6b58f',[x,2.0,-6.46],[2.05,3.8,.32]);
+    box('#ad8a6c',[x,2.0,-6.25],[1.87,3.5,.12]);
+    for(let row=0;row<4;row++){
+      box('#e8cfac',[x,.55+row*.85,-6.05],[2.0,.09,.38]);
+      for(let b=0;b<7;b++){
+        const bx=x-.78+b*.25,h=.44+(b%3)*.085;
+        box(books[(row+b)%4],[bx,.61+row*.85+h/2,-6.11],[.18,h,.22]);
+        box('#f5e8cf',[bx,.67+row*.85+h*.4,-5.993],[.12,.022,.015]);
+      }
+    }
+  }
+  // Rounded arched window crowns and tiny botanical details warm the room.
+  for(const x of [3,11]){
+    const arch=new THREE.Mesh(new THREE.TorusGeometry(1.16,.09,6,24,Math.PI),mat('#f4e3c8'));arch.position.set(x,3.53,-6.20);scene.add(arch);
+    box('#e0be94',[x,1.44,-6.09],[2.7,.13,.43]);
+    disc('#d1a29b',[x+.83,1.66,-6.09],[.14,.3,.14]);
+    for(let i=0;i<3;i++)ball('#97b79a',[x+.83+(i-1)*.10,1.96+Math.sin(i)*.13,-6.09],[.12,.24,.07]);
+  }
+  // Authored wood inlay/planks, kept flat and below walking height.
+  for(let i=0;i<24;i++)box('#dfc49f',[8.8,.086,-7.9+i*.76],[17.1,.009,.015]);
+  for(const x of [4.4,6.8,8.9]){
+    box('#ede0bd',[x,.81,-4.72],[.43,.035,.3]);
+    box('#bdadca',[x+.04,.85,-4.72],[.39,.027,.27]);
+    disc('#e2b6a6',[x+.25,.86,-4.72],[.09,.21,.09]);
+  }
   // Garden: marshmallow trees, stones, flowers, benches and a little fountain.
   function tree(x,z,size=1) {
     disc('#b29379',[x,.85*size,z],[.19*size,1.7*size,.19*size]);
@@ -164,16 +194,19 @@ function buildCampus() {
   ball('#c6e6df',[-11,.98,3.4],[.25,.32,.25]);
   // Slide: a tiny roofed tower, ladder and smooth curved pastel chute.
   disc('#d5cfa7',[-10.5,.07,-2.9],[1.75,.12,2.1]);
-  for(const x of [-11.1,-9.9])for(const z of [-4.1,-3.2])rail('#e6c89c',[x,.1,z],[x,3.75,z],.09);
+  for(const x of [-11.1,-9.9])for(const z of [-4.1,-3.2])rail('#9fc8c1',[x,.1,z],[x,3.75,z],.16);
   box('#cfa57e',[-10.5,1.6,-3.7],[1.4,.15,1.25]);
-  const roof=new THREE.Mesh(new THREE.ConeGeometry(1.12,.6,4),mat('#dba8ac'));roof.rotation.y=Math.PI/4;roof.position.set(-10.5,4.05,-3.7);scene.add(roof);
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(1,20,12,0,Math.PI*2,0,Math.PI/2),mat('#e5b4c3'));dome.position.set(-10.5,3.8,-3.7);dome.scale.set(1.03,.62,.92);dome.castShadow=true;scene.add(dome);
+  disc('#f0ce9e',[-10.5,3.78,-3.7],[1.08,.16,.97]);
+  for(const x of [-11.1,-9.9]){disc('#e8d5ae',[x,1.75,-3.7],[.24,.15,.24]);ball('#d6b8d2',[x,3.65,-3.7],[.24,.26,.24]);}
+  ball('#f3d488',[-10.5,4.5,-3.7],[.16,.23,.16]);
   for(let i=0;i<5;i++)rail('#b4caca',[-11.18,.25+i*.3,-4.6],[-9.82,.25+i*.3,-4.6],.065);
   for(const x of [-11.18,-9.82])rail('#b1b4cf',[x,.1,-4.65],[x,1.8,-4.2],.065);
   const curve=SLIDE_CURVE;
   const chutePoints=[],chuteIndices=[];
   for(let i=0;i<=20;i++){const p=curve.getPoint(i/20);chutePoints.push(p.x-.46,p.y,p.z,p.x+.46,p.y,p.z);if(i<20){const j=i*2;chuteIndices.push(j,j+2,j+1,j+1,j+2,j+3)}}
   const chuteGeometry=new THREE.BufferGeometry();chuteGeometry.setAttribute('position',new THREE.Float32BufferAttribute(chutePoints,3));chuteGeometry.setIndex(chuteIndices);chuteGeometry.computeVertexNormals();
-  const chute=new THREE.Mesh(chuteGeometry,new THREE.MeshStandardMaterial({color:'#e9ba77',side:THREE.DoubleSide,roughness:.65}));chute.castShadow=true;chute.userData.space='playground';scene.add(chute);
+  const chute=new THREE.Mesh(chuteGeometry,new THREE.MeshStandardMaterial({color:'#edb176',side:THREE.DoubleSide,roughness:.65}));chute.castShadow=true;chute.userData.space='playground';scene.add(chute);
   for(const side of [-.49,.49]) {
     const points=curve.getPoints(20).map(p=>p.add(new THREE.Vector3(side,.14,0)));
     const edge=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),20,.08,6,false),mat('#d5999e'));edge.userData.space='playground';scene.add(edge);
@@ -246,48 +279,10 @@ function buildCampus() {
   // Station groups use world-space children, so classify explicitly.
   for(const entry of sets)if(stations.includes(entry.o))entry.side='classroom';
   const actors=new Map();
-  const palettes=['#f2bbad','#b9cfc1','#c5bce1','#f0d28d','#b4d2df','#e3b6cb'];
   function character(agent) {
-    const seed=hashId(agent.id), color=palettes[seed%palettes.length];
-    const root=new THREE.Group(), body=new THREE.Group();root.add(body);body.name="Body";scene.add(root);
-    ball(color,[0,.59,0],[.36,.48,.29],body);
-    const head=new THREE.Group(),eyes=[];head.name='Head';body.add(head);
-    ball(color,[0,1.16,0],[.43,.39,.36],head);
-    for(const side of [-1,1]) {
-      ball(color,[side*.29,1.49,0],[.16,(seed%3===0?.3:.17),.14],head);
-      ball('#f9dcd3',[side*.29,1.49,.105],[.09,(seed%3===0?.2:.1),.05],head);
-      const eye=new THREE.Group();eye.position.set(side*.14,1.2,.329);head.add(eye);eyes.push(eye);
-      ball('#4d455a',[0,0,0],[.048,.07,.027],eye);
-      ball('#fff8e9',[-.01,.022,.021],[.013,.018,.008],eye);
-      ball('#eaa9a6',[side*.27,1.08,.285],[.085,.04,.025],head);
-    }
-    ball('#775965',[0,1.1,.362],[.045,.03,.024],head);
-    const arms=[-1,1].map((side,i)=>{const pivot=new THREE.Group();pivot.name=i?'RightArm':'LeftArm';pivot.position.set(side*.39,.85,0);body.add(pivot);ball(color,[0,-.19,0],[.13,.28,.14],pivot);return pivot});
-    const feet=[-1,1].map(side=>ball('#f4e4cd',[side*.2,.15,.08],[.17,.16,.23],root));
-    feet.forEach((foot,i)=>foot.name=i?'RightFoot':'LeftFoot');
-    const mug=new THREE.Group();mug.position.set(0,-.43,.05);arms[1].add(mug);
-    disc('#f7ebd8',[0,0,0],[.11,.18,.11],mug);disc('#87664e',[0,.093,0],[.085,.008,.085],mug);
-    const handle=new THREE.Mesh(new THREE.TorusGeometry(.075,.025,6,10),mat('#f7ebd8'));handle.position.set(.11,0,0);mug.add(handle);mug.visible=false;
-    // Deterministic accessories give stable identity without introducing external assets.
-    if(seed%3===1) {
-      box('#766b97',[0,1.24,.37],[.5,.035,.03],head);
-      for(const side of [-1,1]) {
-        const ring=new THREE.Mesh(new THREE.TorusGeometry(.105,.018,6,12),mat('#766b97'));
-        ring.position.set(side*.145,1.24,.378);head.add(ring);
-      }
-    } else if(seed%3===2) {
-      disc('#91b6a7',[0,1.55,0],[.31,.12,.28],head);
-      ball('#e8c88b',[.15,1.64,.08],[.07,.08,.07],head);
-    }
-    box('#fcf0d6',[0,.77,.28],[.24,.22,.025],body);
-    ball(palettes[(seed+2)%palettes.length],[0,.8,.31],[.055,.055,.02],body);
-    // Cushioned headphones echo the approved plush reference without costly fur.
-    for(const side of [-1,1])ball('#d5cbbf',[side*.44,1.2,0],[.12,.22,.23],head);
-    const band=new THREE.Mesh(new THREE.TorusGeometry(.45,.055,8,20,Math.PI),mat('#b6ada6'));
-    band.position.set(0,1.2,0);head.add(band);
-    head.position.y=.98;for(const child of head.children)child.position.y-=.98;
-    const name=label(agent.name,0,2,0,1.7);root.userData.agentId=agent.id;
-    return {root,body,head,eyes,arms,feet,mug,animation:animateCharacter(root),name,seed,agent,path:null,start:0,duration:1,space:agent.presence.space};
+    const seed=hashId(agent.id),parts=art.plush(seed);scene.add(parts.root);
+    const name=label(agent.name,0,2,0,1.7);parts.root.userData.agentId=agent.id;
+    return {...parts,animation:animateCharacter(parts.root),name,seed,agent,path:null,start:0,duration:1,space:agent.presence.space};
   }
   function sync(world) {
     const shown=[...world.agents].sort((a,b)=>a.id.localeCompare(b.id)).slice(0,RENDER_LIMIT);
@@ -311,12 +306,12 @@ function buildCampus() {
     }
     for(const [id,a] of actors)if(!seen.has(id)) {
       director.cancel(id);director.finishExit(id);a.animation.dispose();scene.remove(a.root,a.name);a.name.material.map.dispose();a.name.material.dispose();
-      a.root.traverse(o=>{if(o.geometry && ![sphere,cube,cylinder].includes(o.geometry))o.geometry.dispose()});actors.delete(id);
+      a.dispose();actors.delete(id);
     }
     stations.forEach((station,i)=>{station.userData.occupied=i<Math.max(4,counts.classroom)});
     const selected=follow.value;
     follow.replaceChildren(new Option('Choose an agent',''),...shown.map(a=>new Option(a.name,a.id)));
-    follow.value=actors.has(selected)?selected:'';
+    follow.value=actors.has(selected)?selected:'';portraitButton.disabled=!follow.value;if(!follow.value){portrait=false;portraitButton.setAttribute('aria-pressed','false');}
     if(selected&&!actors.has(selected))setRoom('campus');
     status.textContent=`3D campus · ${shown.length} characters${world.agents.length>RENDER_LIMIT ? ' shown of '+world.agents.length+' (full roster in 2D)' : ''} · decorative idle animation is not agent activity`;
   }
@@ -344,8 +339,9 @@ function buildCampus() {
     }
     resize();
   }
-  follow.addEventListener('change',()=>{const a=actors.get(follow.value);if(a)setRoom(a.space)});
-  document.getElementById('cameraHome').addEventListener('click',()=>{follow.value='';orbit=.3;zoom=1;setRoom('campus');document.getElementById('cameraZoom').value='1'});
+  follow.addEventListener('change',()=>{const a=actors.get(follow.value);portraitButton.disabled=!a;if(a)setRoom(a.space);else {portrait=false;portraitButton.setAttribute('aria-pressed','false');}});
+  portraitButton.addEventListener('click',()=>{portrait=!portrait;portraitButton.setAttribute('aria-pressed',String(portrait));});
+  document.getElementById('cameraHome').addEventListener('click',()=>{follow.value='';portrait=false;portraitButton.disabled=true;portraitButton.setAttribute('aria-pressed','false');orbit=.3;zoom=1;setRoom('campus');document.getElementById('cameraZoom').value='1'});
   document.getElementById('cameraZoom').addEventListener('input',e=>{zoom=Number(e.target.value)});
   addEventListener('playgrounds-world',e=>sync(e.detail.world));
   addEventListener('playgrounds-focus',e=>{follow.value='';setRoom(e.detail)});
@@ -357,7 +353,7 @@ function buildCampus() {
   });
   const observer=new ResizeObserver(resize);observer.observe(host);
   renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();mode.value='2d';mode.disabled=true;setView();status.textContent='3D context lost — 2D remains available. Reload to retry.'});
-  let last=0; const look=new THREE.Vector3();
+  let last=0; const look=new THREE.Vector3(),cameraTarget=new THREE.Vector3(),cameraGoal=new THREE.Vector3(),aim=new THREE.Vector3();
   function frame(now) {
     requestAnimationFrame(frame);
     if(document.hidden || host.hidden || now-last<1000/30)return;
@@ -370,16 +366,21 @@ function buildCampus() {
     host.dataset.setting='slide-carousel-monkey-bars-modern-study';
     const followed=actors.get(follow.value);
     if(followed)setRoom(followed.path&&followed.crossing?'campus':followed.space);
-    for(const {o,side} of sets)o.visible=(room==='campus'||side===room)&&(o.userData.occupied!==false);
+    for(const {o,side} of sets)o.visible=!(portrait&&followed&&!followed.path)&&(room==='campus'||side===room)&&(o.userData.occupied!==false);
     host.dataset.room=room;
     host.dataset.floorArea=String(CAMPUS.width*CAMPUS.depth);
     host.dataset.following=follow.value;
-    currentExtent=ambientMotion?THREE.MathUtils.damp(currentExtent,targetExtent,6,dt):targetExtent;
+    const detail=portrait&&followed&&!followed.path,extent=detail?Math.max(1.4,1.6/viewAspect):targetExtent;
+    currentExtent=ambientMotion?THREE.MathUtils.damp(currentExtent,extent,6,dt):extent;
     camera.left=-currentExtent*viewAspect;camera.right=currentExtent*viewAspect;camera.top=currentExtent;camera.bottom=-currentExtent;
     camera.zoom=zoom;
     look.x=reduce.matches||!ambientMotion?focus:THREE.MathUtils.lerp(look.x,focus,.12);
-    camera.position.set(look.x+Math.sin(orbit)*32,24,CAMPUS.centerZ+Math.cos(orbit)*32);
-    camera.lookAt(look.x,0,CAMPUS.centerZ);camera.updateProjectionMatrix();
+    cameraGoal.set(look.x+Math.sin(orbit)*32,24,CAMPUS.centerZ+Math.cos(orbit)*32);
+    cameraTarget.set(look.x,0,CAMPUS.centerZ);
+    if(detail){const p=followed.root.position;const angle=followed.root.rotation.y;cameraGoal.set(p.x+Math.sin(angle+.12)*6,p.y+2.4,p.z+Math.cos(angle+.12)*6);cameraTarget.set(p.x,p.y+1,p.z);}
+    const cameraBlend=ambientMotion&&dt>0?1-Math.exp(-6*dt):1;
+    camera.position.lerp(cameraGoal,cameraBlend);aim.lerp(cameraTarget,cameraBlend);camera.lookAt(aim);
+    camera.updateProjectionMatrix();
     const interactions=director.tick(dt,[...actors.values()].map(describe),ambientMotion,carousel.rotation.y,document.getElementById('ambientLife').checked);
     for(const a of actors.values()) {
       const activity=visualActivity(a.agent,Date.now()/1000), stale=activity==='stale';
@@ -407,7 +408,7 @@ function buildCampus() {
       for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;
       a.root.scale.setScalar(stale?.88:1);
-      a.root.visible=room==='campus'||a.space===room;
+      a.root.visible=detail?a===followed:room==='campus'||a.space===room;
       a.name.visible=a.root.visible;
       a.name.position.set(a.root.position.x,a.root.position.y+2.1,a.root.position.z);
     }
@@ -418,6 +419,10 @@ function buildCampus() {
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
     host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);
     renderer.render(scene,camera);
+    document.getElementById('portraitNote').hidden=!detail;
+    host.dataset.artDirection='plush-pack-2026-09-30';host.dataset.portrait=String(!!detail);
+    host.dataset.artMetrics=JSON.stringify({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});
+    host.dataset.characterStyles=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,style:a.root.userData.artStyle})));
   }
   if(globalThis.playgroundsWorldSnapshot)sync(globalThis.playgroundsWorldSnapshot.world);
   host.hidden=false;mode.disabled=false;setView();resize();requestAnimationFrame(frame);

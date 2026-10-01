@@ -17,6 +17,7 @@ export function obstacles() {
   const add=(x,z,w,d)=>boxes.push({minX:lower(x-w/2-RADIUS),maxX:upper(x+w/2+RADIUS),minZ:lower(z-d/2-RADIUS),maxZ:upper(z+d/2+RADIUS)});
   for(let i=0;i<RENDER_LIMIT;i++){const p=spot('classroom',i);add(p.x,p.z+DESK.offset,DESK.width,DESK.depth)}
   add(5.6,-4.75,3.4,1.15);add(8.9,-4.65,1.6,1.6);
+  add(13.3,-6.25,2.05,.65);add(15.6,-6.25,2.05,.65);
   add(1.1,-5.2,1.25,.65);add(11.8,-5.2,.9,.9);
   add(11.8,1.4,1.55,2.55);add(11.25,3.6,1.3,1.3);
   add(4.6,7,3.5,.95);

@@ -33,7 +33,7 @@ try {
   await owner.waitForFunction(()=>window.RoomUI.current?.name==='QA real garden');
   const rid=await owner.evaluate(()=>window.RoomUI.current.id);
   const room=await json(`/api/rooms/${rid}`,ownerKey);
-  await json(`/api/rooms/${rid}/goals`,ownerKey,{title:'Private real integration goal',budget:20,agent_id:room.caller_agent_id});
+  const goal=await json(`/api/rooms/${rid}/goals`,ownerKey,{title:'Private real integration goal',budget:20,agent_id:room.caller_agent_id});
   await owner.waitForFunction(()=>document.getElementById('goalTitle').textContent.includes('Private real integration goal'));
   console.log('QA stage: private goal rendered');const invitationUI=await owner.getByRole('button',{name:'Invite companions',exact:true}).count();
   let invite;
@@ -59,6 +59,17 @@ try {
     await owner.getByRole('button',{name:'Invite companions',exact:true}).click();await owner.getByRole('button',{name:'Revoke',exact:true}).click();await owner.waitForFunction(()=>document.getElementById('inviteList').textContent.includes('Revoked'));await owner.click('#dialogCancel');
     assert.equal((await api(`/api/rooms/${rid}/join`,null,{invite_token:rev.token,name:'Revoked'})).status,403);
   }
+  console.log('QA stage: authenticated workboard lifecycle');
+  const task=await json(`/api/rooms/${rid}/goals/${goal.id}/tasks`,ownerKey,{title:'Private room board acceptance',bounty:10});
+  await json(`/api/rooms/${rid}/tasks/${task.id}/claim`,memberKey,{agent_id:memberInfo.caller_agent_id});
+  await owner.click('#classTab');await member.click('#classTab');
+  for(const p of [owner,member])await p.waitForFunction(()=>document.querySelector('#workboard').textContent.includes('Private room board acceptance'));
+  await json(`/api/rooms/${rid}/tasks/${task.id}/progress`,memberKey,{agent_id:memberInfo.caller_agent_id,note:'Authenticated checkpoint',progress_pct:.5});
+  for(const p of [owner,member])await p.waitForFunction(()=>document.querySelector('#workboard progress')?.value===50);
+  await json(`/api/rooms/${rid}/tasks/${task.id}/complete`,memberKey,{agent_id:memberInfo.caller_agent_id,result:'Room board verified'});
+  await owner.waitForFunction(()=>document.querySelector('#workboard').textContent.includes('pending verification'));
+  await json(`/api/rooms/${rid}/tasks/${task.id}/verify`,ownerKey,{approved:true,verifier_agent_id:room.caller_agent_id});
+  for(const p of [owner,member])await p.waitForFunction(()=>document.querySelector('#workboard').textContent.includes('9.00 credits earned'));
   console.log('QA stage: screenshots');for(const [page,name] of [[owner,'desktop'],[member,'mobile']]){
     await page.waitForFunction(()=>document.getElementById('renderStatus').textContent.includes('3D campus'));
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no horizontal overflow');
@@ -68,6 +79,7 @@ try {
   await member.evaluate(()=>window.refresh());
   await member.waitForFunction(()=>!document.getElementById('goalTitle').textContent.includes('Private real integration goal'));
   assert.equal((await api(`/api/rooms/${rid}/state`,memberKey)).status,401);
+  assert.ok(!(await member.locator('#workboard').textContent()).includes('Private room board acceptance'),'revocation clears board');
   await owner.reload();assert.equal(await owner.evaluate(()=>window.RoomUI.current),null,'reload forgets room');
   for(const p of [owner,member]){const storage=await p.evaluate(()=>JSON.stringify([localStorage,sessionStorage]));for(const secret of secrets)assert.ok(!storage.includes(secret),'no persistent credentials');}
   for(const secret of secrets)assert.ok(urls.every(u=>!u.includes(secret)),'no credentials in URLs');
