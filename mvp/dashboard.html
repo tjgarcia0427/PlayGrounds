@@ -221,7 +221,9 @@ async function refresh() {
     if (t.status === 'done' && t.verified_at && now - t.verified_at < 10 && t.agent_id)
       doneFlash.set(t.agent_id, now);
   });
-  document.getElementById('agentcap').textContent = `(${agents.length}/64 registered · up to ${s.policy?.classroom_agents_per_goal || 4} per Study Hall goal)`;
+  const roomCapacity=world.limits?.classroom_per_goal ?? s.policy?.classroom_agents_per_goal;
+  const registeredCapacity=world.limits?.registered;
+  document.getElementById('agentcap').textContent = `(${agents.length}${registeredCapacity ? '/'+registeredCapacity : ''} registered · ${roomCapacity ? 'up to '+roomCapacity : 'capacity unavailable'} per Study Hall goal)`;
   updateMarkup('agents', agents.map(a => {
     const rep = s.reputation && s.reputation[a.id];
     const repBits = rep ? Object.entries(rep).map(([k, v]) => `${escapeHtml(k)} ${Number(v.mean || 0).toFixed(2)}`).join(' · ') : '';

@@ -60,6 +60,8 @@ try {
     assert.equal((await api(`/api/rooms/${rid}/join`,null,{invite_token:rev.token,name:'Revoked'})).status,403);
   }
   console.log('QA stage: authenticated workboard lifecycle');
+  const limits=(await json(`/api/rooms/${rid}/world`,memberKey)).limits;
+  assert.ok((await member.locator('#agentcap').textContent()).includes(`up to ${limits.classroom_per_goal} per Study Hall goal`),'room capacity matches authoritative world');
   const task=await json(`/api/rooms/${rid}/goals/${goal.id}/tasks`,ownerKey,{title:'Private room board acceptance',bounty:10});
   await json(`/api/rooms/${rid}/tasks/${task.id}/claim`,memberKey,{agent_id:memberInfo.caller_agent_id});
   await owner.click('#classTab');await member.click('#classTab');
