@@ -45,8 +45,23 @@ try {
   const personalityLedger=await api('/api/ledger');
   for(const [id,pose,file] of [[agents[5].id,'lookAround','look-around-desktop.png'],[agents[5].id,'headphones','headphone-adjust-desktop.png'],[agents[0].id,'seatedHeadphones','seated-headphone-adjust-desktop.png']]){
     await page.selectOption('#followAgent',id);
-    try { await page.waitForFunction(({id,pose})=>JSON.parse(document.getElementById('campus3d').dataset.poses||'[]').some(a=>a.id===id&&a.pose===pose&&(pose==='lookAround'?Math.abs(a.headYaw)>.16:a.rightArmX<-2.5)&&(pose!=='seatedHeadphones'||a.bodyY>.2)),{id,pose},{timeout:90000}); } catch(error) {
-      console.error('Personality observation failed',id,pose,await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
+    // The director caps each frame at 0.1s; software Chrome can advance less
+    // than one 32s gesture cycle in 90 wall seconds. Observe a real full cycle
+    // plus blend margin, with a separate bounded stall timeout. Do not jump the
+    // animation clock, force a pose, or weaken the actual transform assertions.
+    // CI run36794961243 hit the 180s watchdog before reaching the 36s
+    // animation budget (software rendering advanced only 50.5s in 269s total).
+    // Allow 300 wall seconds, but still fail after 36 observed animation seconds.
+    const startedClock=Number(await page.locator('#campus3d').getAttribute('data-animation-clock'));
+    assert.ok(Number.isFinite(startedClock),'animation clock must be observable');
+    try { await page.waitForFunction(({id,pose,startedClock})=>{
+      const host=document.getElementById('campus3d');
+      const observed=JSON.parse(host.dataset.poses||'[]').some(a=>a.id===id&&a.pose===pose&&(pose==='lookAround'?Math.abs(a.headYaw)>.16:a.rightArmX<-2.5)&&(pose!=='seatedHeadphones'||a.bodyY>.2));
+      if(observed)return true;
+      if(Number(host.dataset.animationClock)-startedClock>=36)throw new Error(`Missing ${pose} after a full animation cycle and blend margin`);
+      return false;
+    },{id,pose,startedClock},{timeout:300000}); } catch(error) {
+      console.error('Personality observation failed',id,pose,{startedClock},await page.locator('#campus3d').evaluate(el=>({clock:el.dataset.animationClock,poses:el.dataset.poses})));
       await page.locator('[aria-label="Shared agent world"]').screenshot({path:join(output,'personality-failure.png')});
       throw error;
     }
