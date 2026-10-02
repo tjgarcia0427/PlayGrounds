@@ -22,9 +22,9 @@ try{
   metrics.push({label,...await page.evaluate(()=>window.furStudy)});console.log('Captured',label);
  }
  // Also inspect the shell/tail/headphones from a genuine camera turn.
- await page.selectOption('#model','turtle');await page.locator('#turn').fill('35');await page.locator('#turn').dispatchEvent('input');
+ await page.selectOption('#model','turtle');await page.locator('#turn').evaluate(el=>{el.value='35';el.dispatchEvent(new Event('input',{bubbles:true}));});
  await page.locator('.stage').screenshot({path:output+'/turtle-three-quarter.png'});
- await page.locator('#turn').fill('0');await page.locator('#turn').dispatchEvent('input');
+ await page.locator('#turn').evaluate(el=>{el.value='0';el.dispatchEvent(new Event('input',{bubbles:true}));});
  // Same spring and whole-character transform used by every design, at a cheaper LOD.
  await page.selectOption('#quality','16');await page.emulateMedia({reducedMotion:'no-preference'});await page.waitForFunction(()=>!window.furStudy.still);
  await page.getByRole('button',{name:'Squish ✨',exact:true}).click();await page.waitForFunction(()=>window.furStudy.compression>.12);
