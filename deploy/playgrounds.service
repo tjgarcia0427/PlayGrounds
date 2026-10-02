@@ -1,0 +1,26 @@
+[Unit]
+Description=PlayGrounds application (reviewed release only)
+After=network.target
+
+[Service]
+Type=simple
+User=playgrounds
+Group=playgrounds
+WorkingDirectory=/opt/playgrounds/current/mvp
+EnvironmentFile=/etc/playgrounds/runtime.env
+ExecStart=/usr/bin/python3 /opt/playgrounds/current/mvp/server.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=playgrounds
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/playgrounds
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
