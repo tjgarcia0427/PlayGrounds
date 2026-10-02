@@ -14,7 +14,10 @@ void main(){
  vec3 n=normalize(normal);
  float wave=sin(position.y*7.+position.x*4.+time*1.8)*.14;
  vec3 bend=vec3(wave,-.28,cos(position.x*6.+time)*.1);
- vec3 p=position+(n+bend*height)*coat*height;
+ // Keep short fur around the two eye sockets so the coat cannot cover the eyes.
+ float sockets=min(length(position-vec3(-.27,.12,.75)),length(position-vec3(.27,.12,.75)));
+ float grooming=mix(.12,1.,smoothstep(.10,.24,sockets));
+ vec3 p=position+(n+bend*height)*coat*height*grooming;
  float sy=1.-compression;
  float sx=inversesqrt(sy);
  p*=vec3(sx,sy,sx);
@@ -97,18 +100,21 @@ try{
  }
  // Soft analytic contact shadow, never a downloaded texture.
  const shadow=new THREE.Mesh(new THREE.PlaneGeometry(3.4,2.6),new THREE.ShaderMaterial({transparent:true,depthWrite:false,vertexShader:'varying vec2 t; void main(){t=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:'varying vec2 t;void main(){vec2 p=(t-.5)*2.;float a=exp(-dot(p,p)*5.)*.13;gl_FragColor=vec4(.29,.23,.32,a);}' }));shadow.rotation.x=-Math.PI/2;shadow.position.y=-1.11;scene.add(shadow);
+ let dirty=true;
  let still=reduced.matches,c=0,velocity=0,elapsed=0,previous=performance.now(),frames=0;
- function setStill(){document.querySelector('#still').setAttribute('aria-pressed',String(still));if(still){c=velocity=0;uniforms.compression.value=0;}}
+ function setStill(){dirty=true;document.querySelector('#still').setAttribute('aria-pressed',String(still));if(still){c=velocity=0;uniforms.compression.value=0;}}
  setStill();reduced.addEventListener('change',()=>{still=reduced.matches;setStill();});
  function squish(){if(!still){velocity=3.8;}}
  document.querySelector('#squish').onclick=squish;canvas.addEventListener('pointerdown',squish);
  document.querySelector('#still').onclick=()=>{still=!still;setStill();};
- document.querySelector('#fluff').oninput=e=>uniforms.coat.value=Number(e.target.value);
- document.querySelector('#quality').onchange=e=>{const n=Number(e.target.value);geometry.instanceCount=n;uniforms.layers.value=n;};
- for(const b of document.querySelectorAll('[data-palette]'))b.onclick=()=>{for(const p of document.querySelectorAll('[data-palette]'))p.setAttribute('aria-pressed',String(p===b));const colors=palettes[b.dataset.palette];uniforms.rootColor.value.set(colors[0]);uniforms.tipColor.value.set(colors[1]);};
- function resize(){const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,3.15/camera.aspect));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
+ document.querySelector('#fluff').oninput=e=>{uniforms.coat.value=Number(e.target.value);dirty=true;};
+ document.querySelector('#turn').oninput=()=>dirty=true;
+ document.querySelector('#quality').onchange=e=>{const n=Number(e.target.value);geometry.instanceCount=n;uniforms.layers.value=n;dirty=true;};
+ for(const b of document.querySelectorAll('[data-palette]'))b.onclick=()=>{for(const p of document.querySelectorAll('[data-palette]'))p.setAttribute('aria-pressed',String(p===b));const colors=palettes[b.dataset.palette];uniforms.rootColor.value.set(colors[0]);uniforms.tipColor.value.set(colors[1]);dirty=true;};
+ function resize(){dirty=true;const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,3.85/camera.aspect));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
  renderer.setAnimationLoop(now=>{
   const dt=Math.min((now-previous)/1000,.033);previous=now;
+  if(still&&!dirty)return;dirty=false;
   if(!still){elapsed+=dt;velocity+=(-95*c-8*velocity)*dt;c=Math.max(-.16,Math.min(.4,c+velocity*dt));}
   uniforms.time.value=elapsed;uniforms.compression.value=c;
   character.rotation.y=Number(document.querySelector('#turn').value)/100*1.5;
