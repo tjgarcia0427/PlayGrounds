@@ -5,21 +5,22 @@ available at `https://plushplaygrounds.duckdns.org`: Caddy issued a valid
 Let's Encrypt certificate, HTTP redirects with 308, and all HTTPS paths return
 a static preparation message (503). No app reverse proxy is active.
 
-PR23 revision `525ab16ba523e0d69909fc56f5e31054210c901e` still has a reproduced
-final-authorization-check/write SSE race in live and replay delivery. These
-templates are preparation, not security approval or permission to bypass review.
-The host's maintenance configuration is intentionally different from the future
-reverse-proxy template in this directory; do not replace it until gates pass.
+Secure rooms #23 is repaired and merged. This branch now includes reviewed
+main `d5c0e287bc8f965602ec1a4586bc736d4d7d33da`, including room UI #27/#28
+and connector #52. Templates remain preparation, not permission to activate.
+The host's maintenance configuration must remain until the release gates pass.
 
 ## Prerequisites
 
-1. Muse completes #23 SSE revocation/delivery serialization and integrates
-   current main. Preserve the room isolation, persistence, nested A2A auth and
-   origin fixes already reviewed. Games were merged in #38: reconcile state
-   sanitization so neither room registries nor unrevealed game moves leak.
-   Games remain lobby/operator-only until per-agent authorization is reviewed.
-2. Independent exact-head review and green CI; integrate #27/#28. Check real
-   backend + Chrome, not just the synthetic UI fixture.
+1. Preserve the merged secure-room authorization and origin checks. The backend
+   reads `PLAYGROUNDS_ALLOWED_HOSTS` (comma-separated hostnames, no scheme or
+   port). Set it to the same owned hostname as `PLAYGROUNDS_HOST`. Caddy keeps
+   the public Host header: the backend explicitly allowlists it and accepts
+   matching HTTPS Origin writes; arbitrary hosts and hostile origins fail.
+   Do not rewrite Host to loopback or strip Origin to bypass these checks.
+2. Independent exact-head template review and green combined CI. Complete #33
+   health/logging/backup rotation and isolated restore proof, then verify the
+   deployed revision with real-backend Chrome and the actual two-agent pilot.
 3. Owned hostname, DNS A/AAAA pointing at this VPS, TCP 80/443 reachable through
    cloud and host firewalls. Do not change SSH or OpenClaw rules.
 

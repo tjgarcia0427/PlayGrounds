@@ -10,6 +10,7 @@
 	@queryCredential query token=*
 	respond @queryCredential "Use Authorization headers, not URL credentials." 400
 	reverse_proxy 127.0.0.1:8472 {
+		# Preserve public Host; runtime PLAYGROUNDS_ALLOWED_HOSTS must match.
 		flush_interval -1
 		# Current backend must use socket peer for rate limits until an explicit
 		# trusted-proxy policy is implemented. Never trust client IP headers.
