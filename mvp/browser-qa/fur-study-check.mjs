@@ -13,7 +13,7 @@ try{
  const page=await browser.newPage({viewport:{width:800,height:1000},reducedMotion:'reduce'});page.setDefaultTimeout(60000);
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.goto('http://127.0.0.1:8498/art/fur-study/');await page.waitForFunction(()=>window.furStudy?.ready);
- const metrics=[],views=[['dot','headphones','Dot version · over-ear'],['dot','earbuds','Dot version · wired earbuds'],['rabbit','signature','Animal version · Rabbit'],['turtle','signature','Animal version · Turtle'],['monkey','signature','Animal version · Monkey'],['bird','signature','Animal version · Bird']];
+ const metrics=[],views=[['dot','headphones','Dot version · over-ear'],['rabbit','signature','Animal version · Rabbit'],['turtle','signature','Animal version · Turtle'],['bird','signature','Animal version · Bird']];
  for(const [model,accessory,label] of views){
   await page.selectOption('#model',model);await page.selectOption('#accessory',accessory);
   await page.waitForFunction(([m,a])=>window.furStudy.model===m&&window.furStudy.accessory===a,[model,accessory]);
@@ -35,7 +35,7 @@ try{
  assert.equal(await page.evaluate(()=>window.furStudy.time),frozen);assert.equal(await page.evaluate(()=>window.furStudy.compression),0);
  // Tallest and widest silhouettes on mobile; projected conservative fur/accessory bounds.
  await page.setViewportSize({width:390,height:1000});
- for(const model of ['dot','rabbit','turtle','monkey','bird']){
+ for(const model of ['dot','rabbit','turtle','bird']){
   await page.selectOption('#model',model);await page.waitForFunction(m=>window.furStudy.viewportWidth===390&&window.furStudy.model===m,model);
   const f=await page.evaluate(()=>window.furStudy.framing);assert.ok(f[0]>-.95&&f[1]<.95&&f[2]<.95&&f[3]>-.95,`${model} envelope fits mobile`);
   await page.screenshot({path:`${output}/mobile-${model}.png`});
@@ -43,9 +43,9 @@ try{
  assert.deepEqual(errors,[]);writeFileSync(output+'/metrics.json',JSON.stringify(metrics,null,2));
  // Presentation sheet from untouched browser captures (not synthetic/image-generated previews).
  const cards=views.map(([m,a,label])=>{const file=m==='dot'?`dot-${a}`:m;return `<article><img src="data:image/png;base64,${readFileSync(`${output}/${file}.png`).toString('base64')}"><h2>${label}</h2></article>`;}).join('');
- const sheet=await browser.newPage({viewport:{width:1500,height:1160}});
- await sheet.setContent(`<style>*{box-sizing:border-box}body{margin:0;background:#faf8fc;color:#514957;font:16px system-ui;padding:26px}h1{text-align:center;font-size:28px;margin:0 0 6px}p{text-align:center;margin:0 0 20px;color:#7d7585}section{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}article{background:white;border:1px solid #ede6ef;border-radius:22px;overflow:hidden;text-align:center}img{width:100%;height:440px;object-fit:contain}h2{font-size:18px;margin:0;padding:0 8px 18px}</style><h1>Dot version / Animal version</h1><p>PlayGrounds · same shader fur, lighting and camera scale · original synthetic character studies</p><section>${cards}</section>`);
+ const sheet=await browser.newPage({viewport:{width:1100,height:1160}});
+ await sheet.setContent(`<style>*{box-sizing:border-box}body{margin:0;background:#faf8fc;color:#514957;font:16px system-ui;padding:26px}h1{text-align:center;font-size:28px;margin:0 0 6px}p{text-align:center;margin:0 0 20px;color:#7d7585}section{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}article{background:white;border:1px solid #ede6ef;border-radius:22px;overflow:hidden;text-align:center}img{width:100%;height:440px;object-fit:contain}h2{font-size:18px;margin:0;padding:0 8px 18px}</style><h1>PlayGrounds · Core four</h1><p>PlayGrounds · same shader fur, lighting and camera scale · original synthetic character studies</p><section>${cards}</section>`);
  await sheet.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));await sheet.screenshot({path:output+'/comparison.png',fullPage:true});
  const fallback=await browser.newPage();await fallback.addInitScript(()=>{HTMLCanvasElement.prototype.getContext=function(){return null;};});await fallback.goto('http://127.0.0.1:8498/art/fur-study/');await fallback.locator('#fallback').waitFor({state:'visible'});await fallback.screenshot({path:output+'/fallback.png'});
- console.log('Six designs, comparison sheet, turned turtle, squish/recovery, reduced motion, five mobile fits, no errors, fallback PASS');
+ console.log('Four core designs, comparison sheet, turned turtle, squish/recovery, reduced motion, four mobile fits, no errors, fallback PASS');
 }catch(e){console.error(e);throw e;}finally{server.kill();if(browser)await Promise.race([browser.close(),new Promise(r=>setTimeout(r,15000))]);}

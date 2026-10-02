@@ -37,3 +37,10 @@ squish; this is stylized whole-character deformation, not a production skeletal
 rig or physical fabric/headphone simulation. The comparison sheet is composed
 from actual Chrome captures, not image-generation mockups. Tj has approved the
 fur treatment; the choice of Dot vs Animal family remains his to compare.
+
+## Selected core roster — 2026-10-01
+
+Tj selected Dot with over-ear headphones, bird, rabbit and turtle as the four
+core characters. Monkey and wired-earbud Dot are excluded from the core picker.
+Removed the pale mouth/muzzle oval beneath the turtle's eyes. Preserve the
+approved fur/squish treatment and existing signature accessories.

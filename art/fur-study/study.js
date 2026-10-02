@@ -82,7 +82,7 @@ try{
  let dirty=true,model='dot',accessory='signature',generation=0,furParts=[];
  let still=reduced.matches,c=0,velocity=0,elapsed=0,previous=performance.now(),frames=0;
  const signatures={dot:palettes.peach,rabbit:['#89749e','#e5cff7'],turtle:['#477c61','#b9e2aa'],monkey:['#88543a','#d5a277'],bird:palettes.blue};
- const descriptions={dot:'Dot version · over-ear headphones or wired earbuds',rabbit:'Animal version · rabbit / lavender studio headphones',turtle:'Animal version · turtle / round glasses & coral bandana',monkey:'Animal version · monkey / teal beanie & wired earbuds',bird:'Animal version · bird / aviator frames & lilac scarf'};
+ const descriptions={dot:'Dot · over-ear headphones',rabbit:'Animal version · rabbit / lavender studio headphones',turtle:'Animal version · turtle / round glasses & coral bandana',monkey:'Animal version · monkey / teal beanie & wired earbuds',bird:'Animal version · bird / aviator frames & lilac scarf'};
  const material=(color,roughness=.55,metalness=0)=>new THREE.MeshStandardMaterial({color,roughness,metalness});
  function mesh(g,m,p=[0,0,0],s=[1,1,1]){const o=new THREE.Mesh(g,m);o.position.set(...p);o.scale.set(...s);character.add(o);return o;}
  function ball(p,s,color){return mesh(new THREE.SphereGeometry(1,28,20),material(color),p,s);}
@@ -163,7 +163,7 @@ try{
     furBall([sign*.94,-.36,.18],[.23,.30,.25],colors,.12);
    }
    furBall([0,.07,.24],[.75,.77,.58],colors,.16);
-   ball([0,-.29,.82],[.24,.095,.07],'#c5deb2');
+   // Approved turtle: no mouth/muzzle oval.
   }
   if(model==='monkey'){
    tube([[.66,-.68,-.35],[1.10,-.50,-.25],[1.36,.10,-.18],[1.25,.47,-.10],[1.04,.44,-.06],[1.03,.23,-.02]],.095,'#a87955');
