@@ -14,7 +14,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +24,9 @@ jobs:
 
       - name: Publish ownership regression
         run: python3 mvp/test_ownership.py
+
+      - name: MCP credential transport regressions
+        run: python3 mvp/test_mcp_transport.py
 
       - name: Core v0.2 suite (23 tests, self-contained)
         run: python3 mvp/test_v02.py
@@ -37,6 +40,9 @@ jobs:
 
       - name: Audit regressions
         run: python3 mvp/test_audit.py
+
+      - name: Secure rooms regressions
+        run: python3 mvp/test_rooms.py
 
       - name: Mini-games engine + HTTP API regressions
         run: python3 mvp/test_games.py
@@ -54,6 +60,8 @@ jobs:
           node mvp/test_interactions.mjs
           node mvp/test_playful.mjs
           node mvp/test_personality.mjs
+          node mvp/test_plush_art.mjs
+          node mvp/test_workboard.mjs
           node --check mvp/assets/campus.js
 
       - name: Install pinned browser QA tools
@@ -76,6 +84,11 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
         run: node mvp/browser-qa/check.mjs
+
+      - name: Chrome room UI contract and responsive QA
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/room-ui.mjs
 
       - name: Upload labeled Chrome screenshots
         if: always()
@@ -111,3 +124,85 @@ jobs:
       - name: Stop test server
         if: always()
         run: kill "$(cat "$RUNNER_TEMP/ci-server.pid")" 2>/dev/null || true
+
+  room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Native room backend and UI integration
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: |
+          npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+          node mvp/browser-qa/room-real.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-room-ui-chrome
+          path: mvp/browser-qa/artifacts/ui-real-*.png
+          if-no-files-found: warn
+
+  plush-art:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Chrome plush art and crowd QA
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/plush-check.mjs
+      - name: Upload original-model art evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plush-art-chrome
+          path: mvp/browser-qa/artifacts/plush-*
+          if-no-files-found: warn
+
+  workboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Real protocol and SSE work board in Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/workboard-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workboard-chrome
+          path: mvp/browser-qa/artifacts/workboard-*
+          if-no-files-found: warn
+
+  mcp-room-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Native room backend with authenticated stdio MCP clients
+        run: python3 mvp/test_mcp_rooms.py

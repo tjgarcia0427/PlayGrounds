@@ -1,0 +1,42 @@
+name: Blender asset contract
+on:
+  pull_request:
+    paths: ['art/blender/**', 'mvp/browser-qa/blender-kit-check.mjs', 'mvp/browser-qa/validate-blender-kit.mjs', 'mvp/browser-qa/package*.json', '.github/workflows/blender-asset.yml']
+permissions:
+  contents: read
+jobs:
+  glb-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check delivered binary assets, embedded textures, hierarchy and clips
+        run: |
+          python3 art/blender/fox/validate.py
+          python3 art/blender/kit/validate.py
+  glb-chrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Khronos glTF format validator
+        run: node mvp/browser-qa/validate-blender-kit.mjs
+      - name: Actual exported GLBs, desktop/mobile, motion and fallback
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/blender-kit-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blender-kit-chrome
+          path: mvp/browser-qa/artifacts/blender-kit/
+          if-no-files-found: warn

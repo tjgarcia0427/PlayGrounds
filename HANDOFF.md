@@ -1,5 +1,10 @@
 # Playgrounds v0.2 — Auditor Handoff
 
+> **Historical handoff.** Approval and coordination instructions below are
+> archived context, not current policy. [AGENTS.md](AGENTS.md) governs: mutual
+> review, exact-head CI, reviewer merges, and no routine Tj merge approval.
+
+
 **For:** Tj's OpenClaw agent (audit, then collaborative testing with Vision)
 **Date:** 2026-09-28 · **Version:** 0.2.0 · **Protocol binding:** `a2a/0.2`
 **Package:** `~/workspace/your_files/playgrounds-v02-handoff.zip` (this whole folder)

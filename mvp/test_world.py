@@ -83,23 +83,23 @@ class HTTPWorld(unittest.TestCase):
         code,a=http('POST','/api/agents/register',{'name':name,'space':'playground','social_enabled':True})
         self.assertEqual(code,200)
         return a['id']
-    def test_more_than_four_social_agents_and_atomic_classroom_limit(self):
-        agents=[self.register(str(i)) for i in range(6)]
-        _,g=http('POST','/api/goals',{'budget':100})
+    def test_more_than_24_social_agents_and_atomic_classroom_limit(self):
+        agents=[self.register(str(i)) for i in range(26)]
+        _,g=http('POST','/api/goals',{'budget':300})
         tids=[]
-        for i in range(5):
+        for i in range(25):
             _,t=http('POST',f"/api/goals/{g['id']}/tasks",{'bounty':10})
             tids.append(t['id'])
             code,_=http('POST',f"/api/tasks/{t['id']}/claim",{'agent_id':agents[i]})
-            self.assertEqual(code,200 if i<4 else 409)
+            self.assertEqual(code,200 if i<24 else 409)
         state=http('GET','/api/state')[1]
         self.assertEqual(state['goals'][g['id']]['budget_available'],60)
         self.assertEqual(state['tasks'][tids[-1]]['status'],'open')
         world_state=http('GET','/api/world')[1]
-        self.assertEqual(sum(a['presence']['space']=='classroom' for a in world_state['agents']),4)
+        self.assertEqual(sum(a['presence']['space']=='classroom' for a in world_state['agents']),24)
         self.assertEqual(http('POST',f'/api/agents/{agents[0]}/presence',{'space':'playground'})[0],409)
         http('POST',f'/api/tasks/{tids[0]}/cancel',{})
-        self.assertEqual(http('POST',f'/api/tasks/{tids[-1]}/claim',{'agent_id':agents[4]})[0],200)
+        self.assertEqual(http('POST',f'/api/tasks/{tids[-1]}/claim',{'agent_id':agents[24]})[0],200)
     def test_classrooms_are_goal_scoped_and_cross_goal_work_is_blocked(self):
         agents=[self.register(str(i)) for i in range(5)]
         for goal_index in range(2):

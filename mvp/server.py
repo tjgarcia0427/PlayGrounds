@@ -8,7 +8,7 @@ settlement, and verification receipts. Credits are internal and non-cash.
 
 API (v0.1 preserved, v0.2 additive):
   POST /api/agents/register            {name, avatar, color, capabilities[], model,
-                                        skills[], provider, modalities...} -> agent (409 when full: max 4)
+                                        skills[], provider, modalities...} -> agent (409 when full: max 64)
   POST /api/agents/{id}/heartbeat       {status, current_task}
   GET  /api/agents/{id}/stats          -> submissions, success rate, credits, model tier
   GET  /api/agents/{id}/card            -> Agent Card: declared claims + observed profile + policy
@@ -43,16 +43,43 @@ API (v0.1 preserved, v0.2 additive):
   POST /a2a                             minimal A2A JSON-RPC: card/get, task/send, task/get, task/cancel
   GET  /avatars/plushN.png              agent avatar images
   GET  /                               the dashboard
+
+Secure rooms (authenticated, isolated; see docs/ROOMS.md):
+  POST /api/rooms                        {name, ...agent fields} -> {room, agent, token}
+                                         (bootstrap: creator becomes owner)
+  GET  /api/rooms                        room directory (ids, names, member counts)
+  GET  /api/rooms/{rid}                  room metadata + members + caller_agent_id
+                                         (member auth)
+  GET  /api/rooms/{rid}/invites          owner-only invite lifecycle listing
+                                         (id, label, status, expires_at...; no hashes/tokens)
+  GET  /api/rooms/{rid}/policy|state|world|events  (member auth; events via
+                                         Authorization header or ?token=)
+  POST /api/rooms/{rid}/a2a              room-scoped JSON-RPC (card/get,
+                                         task/send, task/get, task/cancel),
+                                         bound to the bearer caller with the
+                                         same authorization rules as REST
+  POST /api/rooms/{rid}/invites          {ttl_seconds?, label?} (owner) -> single-use invite
+  POST /api/rooms/{rid}/invites/{iid}/revoke        (owner)
+  POST /api/rooms/{rid}/join             {invite_token, name, ...} -> {room, agent, token}
+  POST /api/rooms/{rid}/members/{aid}/remove       (owner; releases claims, kills tokens)
+  POST /api/rooms/{rid}/leave            (member; owner cannot)
+  POST /api/rooms/{rid}/delete           (owner; destroys the room)
+  POST /api/rooms/{rid}/<protocol...>     the full API above, rewritten onto the room's
+                                         isolated partition with bearer caller binding;
+                                         /agents/register is refused (invite-only)
 """
 import copy
 import games
 import world
 import queue
 from decimal import Decimal
+from contextlib import contextmanager
 import hashlib
+import hmac
 import json
 import math
 import os
+import secrets
 import shutil
 import threading
 import time
@@ -68,7 +95,75 @@ STATE_PATH = os.environ.get("PLAYGROUNDS_STATE_PATH",
 DASHBOARD_PATH = os.path.join(ROOT, "dashboard.html")
 AVATAR_DIR = os.path.join(ROOT, "avatars")
 PORT = int(os.environ.get("PLAYGROUNDS_PORT", "8471"))
+# Phase-1 remote deployment (docs/REMOTE-DEPLOYMENT.md). When set, invite
+# responses carry an absolute join_url built on this base (e.g. a Tailscale
+# MagicDNS name); when unset, today's loopback behavior is unchanged.
+PUBLIC_URL = os.environ.get("PLAYGROUNDS_PUBLIC_URL", "").rstrip("/")
+# Extra Host values accepted beyond loopback (comma-separated), e.g. a
+# Tailscale hostname. Unset = loopback only.
+ALLOWED_HOSTS = [h.strip().lower()
+                 for h in os.environ.get("PLAYGROUNDS_ALLOWED_HOSTS", "").split(",")
+                 if h.strip()]
+
+# Join-attempt rate limiting (public deployments): per-IP sliding window so
+# invite tokens cannot be brute-forced at line speed.
+JOIN_RATELIMIT = 30
+JOIN_WINDOW = 60.0
+JOIN_BUCKET_MAX = 4096  # cap on tracked IPs; inactive keys are evicted
+_JOIN_BUCKET = {}       # ip -> {"hits": [ts...], "seen": last_ts}
+_JOIN_LOCK = threading.Lock()
+# Proxy headers (CF-Connecting-IP / X-Forwarded-For) are honored only when
+# the direct TCP peer is an explicitly trusted proxy. A client-supplied
+# header from an untrusted peer never selects the bucket.
+TRUSTED_PROXIES = {h.strip().lower()
+                   for h in os.environ.get("PLAYGROUNDS_TRUSTED_PROXIES", "").split(",")
+                   if h.strip()}
+# Explicitly configured origin allowed to POST besides same-origin
+# http(s)://Host (e.g. the public HTTPS URL served through a tunnel).
+# Compared verbatim; never derived from forwarded headers.
+TRUSTED_ORIGIN = os.environ.get("PLAYGROUNDS_TRUSTED_ORIGIN", "").rstrip("/")
+
+
+def _join_prune_locked(now, cutoff):
+    """Evict inactive bucket keys first; if still over cap, evict the
+    least-recently-seen. Called with _JOIN_LOCK held."""
+    for ip in [ip for ip, rec in _JOIN_BUCKET.items()
+               if rec["seen"] <= cutoff]:
+        del _JOIN_BUCKET[ip]
+    while len(_JOIN_BUCKET) > JOIN_BUCKET_MAX:
+        oldest = min(_JOIN_BUCKET, key=lambda ip: _JOIN_BUCKET[ip]["seen"])
+        del _JOIN_BUCKET[oldest]
+
+
+def _join_ratelimit_ok(ip):
+    now = time.time()
+    with _JOIN_LOCK:
+        cutoff = now - JOIN_WINDOW
+        rec = _JOIN_BUCKET.get(ip)
+        if rec is None:
+            rec = _JOIN_BUCKET[ip] = {"hits": [], "seen": now}
+        hits = rec["hits"]
+        while hits and hits[0] <= cutoff:
+            hits.pop(0)
+        rec["seen"] = now
+        if len(hits) >= JOIN_RATELIMIT:
+            _join_prune_locked(now, cutoff)
+            return False
+        hits.append(now)
+        if len(_JOIN_BUCKET) > JOIN_BUCKET_MAX:
+            _join_prune_locked(now, cutoff)
+        return True
 MAX_AGENTS = 4  # pilot product limit; not a universal research result
+ROOM_MAX_AGENTS = 64      # room membership cap (matches playground capacity)
+INVITE_DEFAULT_TTL = 86400  # invites expire after 24h unless the owner sets ttl_seconds
+# Entity stores partitioned per room. room_scope() swaps these keys so the
+# entire protocol implementation below runs unmodified on a room's isolated
+# data. Everything else (server_salt, policy, rooms) stays global.
+ROOM_PARTITION_KEYS = ["agents", "goals", "tasks", "plans", "ledger",
+                       "ledger_seq", "artifacts", "reputation", "routing_log",
+                       "decisions", "idempotency", "events", "seq", "context",
+                       "agent_stats", "messages", "msg_seq",
+                       "social_seq", "social_messages"]
 
 SCHEMA_VERSION = 2
 CLAIM_WINDOW = 300       # seconds a claim lease lasts without progress
@@ -80,7 +175,21 @@ ROUTING_LOG_CAP = 2000
 IDEMPOTENCY_TTL = 86400
 
 lock = threading.RLock()
-subscribers = set()
+subscribers = {}  # queue -> room_id (None = lobby)
+sse_owner = {}    # queue -> agent_id (None = lobby / unauthenticated)
+sse_gen = {}      # queue -> generation counter, bumped under lock on every
+                  # revocation; a handler revalidates its captured generation
+                  # after each dequeue so a payload dequeued before revocation
+                  # is never written after it
+
+# Explicit allowlist for the public /api/state snapshot. server_salt,
+# idempotency records and the rooms registry (private member data and
+# credential hashes) never leave the server through this endpoint.
+PUBLIC_STATE_KEYS = ("schema_version", "policy", "agents", "goals", "tasks",
+                     "plans", "ledger", "ledger_seq", "artifacts",
+                     "reputation", "routing_log", "decisions", "events",
+                     "seq", "context", "agent_stats", "messages", "msg_seq",
+                     "social_seq", "social_messages")
 
 
 def new_id(prefix):
@@ -89,6 +198,185 @@ def new_id(prefix):
 
 def utcnow():
     return time.time()
+
+_active_room_id = None  # room whose partition is currently swapped in (lock-held)
+_active_caller = None   # bearer-authenticated agent for the current room request
+_saved_lobby_partitions = None  # real lobby partitions while a room_scope is active
+
+
+def blank_room(name):
+    """An isolated collaboration scope: own agents, budgets, escrow, ledgers,
+    goals, tasks, messages, presence and events."""
+    return {
+        "id": new_id("room"), "name": (name or "Untitled room")[:120],
+        "created_at": utcnow(), "owner_agent_id": None,
+        "members": {},   # agent_id -> {"role": "owner"|"member", "joined_at", "name"}
+        "invites": {},   # invite_id -> invite record (token stored as hash only)
+        "auth": {},      # token_hash -> agent_id (never raw tokens)
+        "agents": {}, "goals": {}, "tasks": {}, "plans": {},
+        "ledger": [], "ledger_seq": 0,
+        "artifacts": {}, "reputation": {}, "routing_log": [],
+        "decisions": {}, "idempotency": {},
+        "events": [], "seq": 0,
+        "context": {}, "agent_stats": {}, "messages": [], "msg_seq": 0,
+        "social_seq": 0, "social_messages": [],
+    }
+
+
+def token_hash(token):
+    return "sha256:" + hashlib.sha256(
+        (state["server_salt"] + ":" + token).encode()).hexdigest()
+
+
+def new_bearer_token():
+    return "tok_" + secrets.token_urlsafe(32)
+
+
+def new_invite_token():
+    return "inv_" + secrets.token_urlsafe(32)
+
+
+@contextmanager
+def room_scope(room):
+    """Swap a room's partitions into the global state dict so every protocol
+    helper operates on the room's isolated data. Callers must hold `lock`
+    (all request handlers do; it is re-entrant)."""
+    global _active_room_id, _saved_lobby_partitions
+    saved = {k: state[k] for k in ROOM_PARTITION_KEYS}
+    prev = _active_room_id
+    prev_saved = _saved_lobby_partitions
+    try:
+        for k in ROOM_PARTITION_KEYS:
+            state[k] = room[k]
+        _active_room_id = room["id"]
+        _saved_lobby_partitions = saved
+        yield room
+    finally:
+        for k in ROOM_PARTITION_KEYS:
+            room[k] = state[k]
+            state[k] = saved[k]
+        _active_room_id = prev
+        _saved_lobby_partitions = prev_saved
+
+
+def _public_lobby_state_locked():
+    """Public lobby snapshot. Call with lock held.
+
+    Positive allowlist: only the keys named in PUBLIC_STATE_KEYS are ever
+    exposed, so the rooms registry (member data, credential hashes, invite
+    records), server_salt and idempotency records can never leak through
+    this endpoint no matter what keys exist in state. ``games`` is
+    allowlisted as well but always replaced with the sanitized per-game
+    public view so current-round raw moves stay hidden."""
+    snap = {k: state[k] for k in PUBLIC_STATE_KEYS if k in state}
+    snap["games"] = {gid: games.public_view(g)
+                     for gid, g in state.get("games", {}).items()}
+    return snap
+
+
+def _public_room_state_locked(room):
+    """A room's /state: only its own isolated partitions. Credential maps
+    (auth), invite records and the membership roster are not partitions and
+    are never serialized here. Call with lock held."""
+    with room_scope(room):
+        return {k: state[k] for k in ROOM_PARTITION_KEYS}
+
+
+def sweep_expired_invites(room):
+    """Expired invites are retained with status=expired so the invite UI can
+    show them honestly; only their redemption is refused."""
+    now = utcnow()
+    for inv in room["invites"].values():
+        if not inv["used"] and not inv["revoked"] and inv["expires_at"] < now:
+            inv["expired"] = True
+
+
+def invite_status(inv):
+    """Lifecycle status for the owner-only invite listing. Never expose
+    token hashes or raw tokens."""
+    if inv.get("used"):
+        return "used"
+    if inv.get("revoked"):
+        return "revoked"
+    if inv.get("expired") or inv["expires_at"] < utcnow():
+        return "expired"
+    return "active"
+
+
+def invite_public(inv):
+    """Owner-visible invite metadata: lifecycle fields only, no secrets."""
+    return {"id": inv["id"], "label": inv.get("label", ""),
+            "created_by": inv.get("created_by"),
+            "created_at": inv.get("created_at"),
+            "expires_at": inv.get("expires_at"),
+            "ttl_seconds": inv.get("ttl_seconds"),
+            "used": bool(inv.get("used")), "used_by": inv.get("used_by"),
+            "used_at": inv.get("used_at"),
+            "revoked": bool(inv.get("revoked")),
+            "status": invite_status(inv)}
+
+
+def release_agent_claims(agent_id):
+    """Return a removed/departed member's claimed-task escrow to goal budgets.
+    Runs inside room_scope(); mirrors sweep_expired_claims without the lease
+    expiry check."""
+    released = []
+    for t in state["tasks"].values():
+        if t.get("status") == "claimed" and t.get("agent_id") == agent_id:
+            g = state["goals"].get(t["goal_id"])
+            if g is not None:
+                g["budget_available"] = g.get("budget_available", 0) + t.get("escrow", 0)
+            t["escrow"] = 0
+            t["status"] = "open"
+            t["agent_id"] = None
+            t["lease"] = {"holder": None, "expires": 0, "last_progress_at": 0}
+            released.append(t["id"])
+            ledger_append("claim_released",
+                          {"reason": "member removed", "escrow_returned": True},
+                          actor="orchestrator", goal_id=t["goal_id"],
+                          task_id=t["id"])
+    if released:
+        save_state()
+    return released
+
+
+def build_agent_record(body, aid, slot, tenant_id, space="classroom"):
+    """Shared agent record constructor for lobby registration and room join."""
+    return {
+        "id": aid,
+        "name": body.get("name", "Agent"),
+        "avatar": body.get("avatar", "🤖"),
+        "color": body.get("color", "#7c6cf0"),
+        "plush": f"plush{(slot % 4) + 1}.png",
+        "capabilities": body.get("capabilities", []),
+        "model": body.get("model", "unknown"),
+        "model_tier": model_tier(body.get("model", "unknown")),
+        "agent_card": {
+            "description": body.get("description", ""),
+            "version": body.get("card_version", "0.2.0"),
+            "provider": body.get("provider", "unknown"),
+            "skills": body.get("skills", []),
+            "input_modalities": body.get("input_modalities", ["text"]),
+            "output_modalities": body.get("output_modalities", ["text"]),
+            "cost_per_task": body.get("cost_per_task"),
+            "rate_limits": body.get("rate_limits", {}),
+            "auth": body.get("auth", {}),
+            "availability": body.get("availability", "idle"),
+            "max_bounty": body.get("max_bounty"),
+            "supportedInterfaces": body.get("supportedInterfaces", []),
+        },
+        "scopes": body.get("scopes", ["*"]),
+        "tenant_id": tenant_id,
+        "observed": {"tasks": 0, "verified": 0, "quality_sum": 0.0,
+                     "latency_sum": 0.0, "cost_sum": 0.0},
+        "credits": 0,
+        "status": "idle",
+        "current_task": None,
+        "location": {"space": space, "goal_id": None},
+        "social_enabled": body.get("social_enabled", False),
+        "last_heartbeat": utcnow(),
+    }
+
 
 
 # ---------------------------------------------------------------- state ---
@@ -103,6 +391,7 @@ def blank_state():
         "decisions": {}, "idempotency": {},
         "events": [], "seq": 0,
         "context": {}, "agent_stats": {}, "messages": [], "msg_seq": 0,
+        "rooms": {}, "social_seq": 0, "social_messages": [],
         "games": {},
         "policy": {
             "auth_required": False,
@@ -216,9 +505,25 @@ def migrate_state():
 
 
 def save_state():
+    """Persist the full server state atomically.
+
+    When called inside room_scope() the swapped-in room partitions must not
+    leak into the lobby root on disk: the snapshot is composed from the real
+    lobby partitions plus the live room record (scalar or reassigned room
+    partitions are synced back to the room record first, so the room's own
+    ledger chain on disk matches memory)."""
+    root = state
+    if _active_room_id is not None and _saved_lobby_partitions is not None:
+        room = state.get("rooms", {}).get(_active_room_id)
+        if room is not None:
+            for k in ROOM_PARTITION_KEYS:
+                room[k] = state[k]
+        root = dict(state)
+        for k in ROOM_PARTITION_KEYS:
+            root[k] = _saved_lobby_partitions[k]
     tmp = STATE_PATH + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(state, f)
+        json.dump(root, f)
     os.replace(tmp, STATE_PATH)
 
 
@@ -228,17 +533,40 @@ def emit(etype, data):
     """Live SSE ring buffer (ephemeral, for the dashboard)."""
     with lock:
         state["seq"] += 1
-        ev = {"seq": state["seq"], "ts": utcnow(), "type": etype, "data": data}
+        ev = {"seq": state["seq"], "ts": utcnow(), "type": etype,
+              "room_id": _active_room_id, "data": data}
         state["events"].append(ev)
         state["events"] = state["events"][-EVENTS_CAP:]
         save_state()
         payload = f"data: {json.dumps(ev)}\n\n".encode()
-        for sub in list(subscribers):
+        for sub, sub_room in list(subscribers.items()):
+            if sub_room != _active_room_id:
+                continue
             try:
                 sub.put_nowait(payload)
             except queue.Full:
-                subscribers.discard(sub)  # client reconnects and obtains current state
+                del subscribers[sub]  # client reconnects and obtains current state
+                sse_gen[sub] = sse_gen.get(sub, 0) + 1  # revoked: same stream
     return ev
+
+
+def _close_room_streams(rid, agent_id=None):
+    """Drop SSE subscriptions for a room (optionally one agent): purge any
+    queued private payloads so a removed member's stream carries nothing
+    further. Call with lock held."""
+    for sub in [s for s, r in subscribers.items()
+                if r == rid and (agent_id is None or sse_owner.get(s) == agent_id)]:
+        while True:
+            try:
+                sub.get_nowait()
+            except queue.Empty:
+                break
+        subscribers.pop(sub, None)
+        sse_owner.pop(sub, None)
+        # Bump the generation so a handler that already dequeued a payload
+        # detects the revocation at its post-dequeue revalidation and drops
+        # the payload instead of writing it.
+        sse_gen[sub] = sse_gen.get(sub, 0) + 1
 
 
 GENESIS_HASH = "genesis:" + hashlib.sha256(b"playgrounds-v02-ledger").hexdigest()[:32]
@@ -453,6 +781,8 @@ def cancel_task(tid, by="human", reason="cancelled"):
 
 def create_plan(goal_id, objective, success_criteria="", topology_policy="solo_first",
                 actor="human"):
+    if actor == "human" and _active_caller:
+        actor = _active_caller
     with lock:
         if goal_id not in state["goals"]:
             return None
@@ -473,6 +803,8 @@ def create_plan(goal_id, objective, success_criteria="", topology_policy="solo_f
 
 
 def replan(plan_id, reason, changes=None, actor="human"):
+    if actor == "human" and _active_caller:
+        actor = _active_caller
     with lock:
         plan = state["plans"].get(plan_id)
         if not plan:
@@ -1210,6 +1542,8 @@ def latest_topology_decision(task_id):
 
 
 def create_task(goal_id, body, actor="human"):
+    if actor == "human" and _active_caller:
+        actor = _active_caller
     """Shared task-creation command used by REST and A2A. Returns
     (task_dict, error_dict)."""
     with lock:
@@ -1292,13 +1626,40 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}", parse_constant=lambda v: (_ for _ in ()).throw(ValueError("non-finite JSON number")))
 
     def _allowed_host(self):
-        return urlparse("http://" + self.headers.get("Host", "")).hostname in ("localhost", "127.0.0.1", "::1")
+        host = (urlparse("http://" + self.headers.get("Host", "")).hostname
+                or "").lower()
+        return host in ("localhost", "127.0.0.1", "::1") or host in ALLOWED_HOSTS
 
+    def _operator_ok(self):
+        """Public-mode gate. When PLAYGROUNDS_OPERATOR_TOKEN is unset everything
+        stays open (loopback pilot). When set, the lobby API, the room
+        directory and room creation require it as an Authorization: Bearer
+        header. Credentials never travel in URLs: query tokens are not
+        accepted. Invite joins and room bearer calls are unaffected."""
+        want = os.environ.get("PLAYGROUNDS_OPERATOR_TOKEN", "")
+        if not want:
+            return True
+        auth = self.headers.get("Authorization", "")
+        return (auth.startswith("Bearer ")
+                and hmac.compare_digest(auth[len("Bearer "):].strip(), want))
+
+    def _origin_ok(self):
+        """Same-origin writes are allowed over http and https. Anything else
+        must match the explicitly configured PLAYGROUNDS_TRUSTED_ORIGIN
+        verbatim — never a forwarded header."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        if origin == "http://" + host or origin == "https://" + host:
+            return True
+        return bool(TRUSTED_ORIGIN) and origin == TRUSTED_ORIGIN
+
+    # ---------- POST ----------
     def do_POST(self):
         if not self._allowed_host():
             return self._send(403, {"error": "loopback Host required"})
-        origin = self.headers.get("Origin")
-        if origin and origin != "http://" + self.headers.get("Host", ""):
+        if not self._origin_ok():
             return self._send(403, {"error": "cross-origin writes forbidden"})
         try:
             if self.headers.get_content_type() != "application/json":
@@ -1331,600 +1692,1266 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._allowed_host():
             return self._send(403, {"error": "loopback Host required"})
+        if self._room_route_get():
+            return
         parsed = urlparse(self.path)
         parts = [p for p in parsed.path.split("/") if p]
-        if parsed.path == "/":
-            with open(DASHBOARD_PATH, "rb") as f:
-                html = f.read()
-            self._send(200, html, "text/html; charset=utf-8")
-        elif parsed.path == "/.well-known/agent-card.json":
+        # The dashboard shell is static and carries no secrets: invited
+        # non-operators must be able to open the join UI without an operator
+        # key. Static assets are likewise public. Everything data-bearing
+        # stays behind the operator gate.
+        public_asset = (parsed.path == "/"
+                        or parsed.path.startswith("/avatars/")
+                        or parsed.path.startswith("/assets/"))
+        if not public_asset and not self._operator_ok():
+            return self._send(403, {"error": "operator token required"})
+        self._dispatch_get(parts, parsed)
+
+    def _dispatch_get(self, parts, parsed):
+            if parsed.path == "/":
+                with open(DASHBOARD_PATH, "rb") as f:
+                    html = f.read()
+                self._send(200, html, "text/html; charset=utf-8")
+            elif parsed.path == "/.well-known/agent-card.json":
+                with lock:
+                    self._send(200, playground_card())
+            elif len(parts) == 2 and parts[0] == "avatars" and parts[1] in (
+                    "plush1.png", "plush2.png", "plush3.png", "plush4.png"):
+                fp = os.path.join(AVATAR_DIR, parts[1])
+                if not os.path.exists(fp):
+                    return self._send(404, {"error": "avatar not found"})
+                with open(fp, "rb") as f:
+                    self._send(200, f.read(), "image/png")
+            elif parsed.path == "/assets/ui.css":
+                with open(os.path.join(ROOT, "assets/ui.css"), "rb") as f:
+                    self._send(200, f.read(), "text/css; charset=utf-8")
+            elif parsed.path in ("/assets/invites.js", "/assets/room-ui.js", "/assets/workboard.js", "/assets/workboard-model.js", "/assets/campus-art.js", "/assets/vendor/RoundedBoxGeometry.js", "/assets/campus.js", "/assets/campus-layout.js",
+                                 "/assets/campus-navigation.js", "/assets/campus-interactions.js",
+                                 "/assets/campus-animation.js", "/assets/vendor/three-pathfinding.module.js",
+                                 "/assets/vendor/three.module.js", "/assets/vendor/three.core.js"):
+                # Exact allowlist, never an arbitrary filesystem/static-file route.
+                with open(os.path.join(ROOT, parsed.path.lstrip("/")), "rb") as f:
+                    self._send(200, f.read(), "text/javascript; charset=utf-8")
+            elif parsed.path == "/assets/workboard.css":
+                with open(os.path.join(ROOT, "assets", "workboard.css"), "rb") as f:
+                    self._send(200, f.read(), "text/css; charset=utf-8")
+            elif parsed.path == "/api/state":
+                with lock:
+                    # Explicit public-state allowlist (plus sanitized games);
+                    # the room registry and credential material stay private.
+                    self._send(200, _public_lobby_state_locked())
+            elif parsed.path == "/api/world":
+                with lock:
+                    self._send(200, world.snapshot(state))
+            elif parsed.path == "/api/policy":
+                with lock:
+                    self._send(200, state["policy"])
+            elif parsed.path == "/api/ledger":
+                qs = parse_qs(parsed.query)
+                since = int(qs.get("since", [0])[0])
+                gid = qs.get("goal_id", [None])[0]
+                typ = qs.get("type", [None])[0]
+                with lock:
+                    evs = [e for e in state["ledger"]
+                           if e["seq"] > since
+                           and (gid is None or e.get("goal_id") == gid)
+                           and (typ is None or e.get("type") == typ)]
+                    self._send(200, {"events": evs[-500:], "digest": ledger_digest(),
+                                     "ledger_seq": state["ledger_seq"]})
+            elif parsed.path == "/api/events":
+                qs = parse_qs(parsed.query)
+                since = int(qs.get("since", [0])[0])
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+                sub = queue.Queue(maxsize=256)
+                try:
+                    with lock:
+                        replay = [ev for ev in state["events"] if ev["seq"] > since]
+                        subscribers[sub] = None
+                        sse_owner[sub] = None
+                    self.connection.settimeout(20)
+                    for ev in replay:
+                        self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
+                    self.wfile.flush()
+                    while True:
+                        try:
+                            payload = sub.get(timeout=15)
+                        except queue.Empty:
+                            with lock:
+                                if sub not in subscribers:
+                                    break
+                            payload = b": ping\n\n"
+                        self.wfile.write(payload)
+                        self.wfile.flush()
+                except (OSError, TimeoutError):
+                    pass
+                finally:
+                    with lock:
+                        subscribers.pop(sub, None)
+                        sse_owner.pop(sub, None)
+            elif parsed.path == "/api/messages":
+                qs = parse_qs(parsed.query)
+                since = int(qs.get("since", [0])[0])
+                gid = qs.get("goal_id", [None])[0]
+                with lock:
+                    msgs = [m for m in state["messages"]
+                            if m["seq"] > since and (gid is None or m.get("goal_id") == gid)]
+                    self._send(200, {"messages": msgs[-100:]})
+            elif parts[:2] == ["api", "games"]:
+                # No viewer identity is accepted here: there is no authenticated
+                # agent identity on this branch, so a caller-supplied agent_id
+                # would disclose other players' hidden moves (see games.py).
+                with lock:
+                    self._sweep_stale_game_rounds()
+                    if len(parts) == 2:
+                        self._send(200, {"games": [
+                            games.public_view(g)
+                            for g in state["games"].values()]})
+                    elif len(parts) == 3 and parts[2] in state["games"]:
+                        self._send(200, {"game": games.public_view(
+                            state["games"][parts[2]])})
+                    else:
+                        self._send(404, {"error": "unknown game"})
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                    and parts[3] == "suggest":
+                tid = parts[2]
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        self._send(404, {"error": "unknown task"})
+                    else:
+                        self._send(200, {"task_id": tid,
+                                         "suggestions": suggest_agents(task)})
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                    and parts[3] == "route":
+                tid = parts[2]
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        self._send(404, {"error": "unknown task"})
+                    else:
+                        self._send(200, {"task_id": tid,
+                                         "routing": learned_scores(task)})
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
+                    and parts[3] == "topology":
+                tid = parts[2]
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        self._send(404, {"error": "unknown task"})
+                    else:
+                        self._send(200, {"task_id": tid,
+                                         "topology": task.get("topology", "solo"),
+                                         "decision": latest_topology_decision(tid)})
+            elif len(parts) == 3 and parts[0] == "api" and parts[1] == "decisions":
+                did = parts[2]
+                with lock:
+                    d = state["decisions"].get(did)
+                    if not d:
+                        self._send(404, {"error": "unknown decision"})
+                    else:
+                        self._send(200, d)
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                    and parts[3] == "stats":
+                aid = parts[2]
+                with lock:
+                    agent = state["agents"].get(aid)
+                    if not agent:
+                        self._send(404, {"error": "unknown agent"})
+                    else:
+                        st = state["agent_stats"].get(aid, blank_agent_stats())
+                        denom = st["verified"] + st["rejected"]
+                        success = (st["verified"] / denom) if denom else None
+                        avg = (st["work_seconds"] / st["completed"]) if st["completed"] else None
+                        self._send(200, {
+                            "agent": agent,
+                            "tasks_submitted": st["completed"],
+                            "tasks_verified": st["verified"],
+                            "tasks_rejected": st["rejected"],
+                            "success_rate": success,
+                            "avg_task_seconds": avg,
+                            "credits_earned": st["credits_earned"],
+                            "review_credits_earned": st.get("review_credits_earned", 0),
+                            "credits_balance": agent.get("credits", 0),
+                            "model": agent.get("model", "unknown"),
+                            "model_tier": agent.get("model_tier", 3),
+                        })
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                    and parts[3] == "card":
+                aid = parts[2]
+                with lock:
+                    agent = state["agents"].get(aid)
+                    if not agent:
+                        self._send(404, {"error": "unknown agent"})
+                    else:
+                        self._send(200, build_agent_card(agent))
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
+                    and parts[3] == "reputation":
+                aid = parts[2]
+                with lock:
+                    if aid not in state["agents"]:
+                        self._send(404, {"error": "unknown agent"})
+                    else:
+                        self._send(200, {"agent_id": aid,
+                                         "reputation": reputation_view(aid)})
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
+                    and parts[3] == "context":
+                gid = parts[2]
+                with lock:
+                    ns = state["context"].get(gid, {})
+                    self._send(200, {"goal_id": gid, "context": ns})
+            else:
+                self._send(404, {"error": "not found"})
+
+    def _post(self):
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        body = self._request_body
+        if self._room_route_post(parts, body):
+            return
+        if not self._operator_ok():
+            self._send(403, {"error": "operator token required"})
+            return
+        self._dispatch_post(parts, body)
+
+    def _dispatch_post(self, parts, body):
+            if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "presence":
+                res = world.move(state, parts[2], body)
+                if res.get("error"):
+                    return self._send(res["code"], res)
+                emit("presence_changed", {"agent_id": parts[2], **res})
+                return self._send(200, res)
+
+            if parts == ["api", "social"]:
+                res = world.post_social(state, body, utcnow())
+                if res.get("error"):
+                    return self._send(res["code"], res)
+                emit("social_posted", {"agent_id": body["agent_id"], "seq": res["message"]["seq"]})
+                return self._send(200, res)
+
+            if parts == ["api", "agents", "register"]:
+                with lock:
+                    space = body.get("space", "classroom")  # legacy connectors retain their lobby
+                    if space not in ("classroom", "playground"):
+                        return self._send(400, {"error": "invalid space"})
+                    if "social_enabled" in body and not isinstance(body["social_enabled"], bool):
+                        return self._send(400, {"error": "social_enabled must be boolean"})
+                    if len(state["agents"]) >= world.MAX_REGISTERED:
+                        return self._send(409, {"error": "pilot registration limit reached"})
+                    if space == "classroom" and not world.classroom_available(state, None, None):
+                        return self._send(409, {"error": "classroom is full",
+                                                "max_agents": world.CLASSROOM_CAP})
+                    aid = new_id("agent")
+                    slot = len(state["agents"])  # 0-based plush slot
+                    agent = build_agent_record(body, aid, slot,
+                                             body.get("tenant_id", "local"),
+                                             space)
+                    state["agents"][aid] = agent
+                    ledger_append("agent_registered",
+                                  {"name": agent["name"], "plush": agent["plush"],
+                                   "skills": [s.get("id") for s in
+                                              agent["agent_card"]["skills"]] or
+                                  agent["capabilities"]},
+                                  actor=aid)
+                    save_state()
+                emit("agent_registered", {"agent": agent})
+                return self._send(200, {"id": aid, "agent": agent,
+                                        "card": build_agent_card(agent)})
+
+            if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "heartbeat":
+                aid = parts[2]
+                sweep_expired_claims()
+                detect_stalls()
+                with lock:
+                    agent = state["agents"].get(aid)
+                    if not agent:
+                        return self._send(404, {"error": "unknown agent"})
+                    agent["status"] = body.get("status", agent["status"])
+                    if "current_task" in body:
+                        agent["current_task"] = body["current_task"]
+                    agent["last_heartbeat"] = utcnow()
+                    save_state()
+                emit("agent_heartbeat", {"agent_id": aid, "status": agent["status"],
+                                        "current_task": agent["current_task"]})
+                return self._send(200, {"ok": True})
+
+            if parts == ["api", "goals"]:
+                with lock:
+                    gid = new_id("goal")
+                    budget = body.get("budget", 1000)
+                    goal = {"id": gid, "title": body.get("title", "Untitled goal"),
+                            "description": body.get("description", ""),
+                            "budget": budget, "budget_available": budget,
+                            "budget_spent": 0,
+                            "tenant_id": body.get("tenant_id", "local"),
+                            "review_pool_pct": float(body.get("review_pool_pct", 0.10)),
+                            "plan_ids": [],
+                            "created_at": utcnow()}
+                    state["goals"][gid] = goal
+                    ledger_append("goal_created", {"title": goal["title"],
+                                                  "budget": budget},
+                                  actor=_active_caller or "human", goal_id=gid)
+                    save_state()
+                emit("goal_created", {"goal": goal})
+                return self._send(200, goal)
+
+            if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "plans":
+                gid = parts[2]
+                plan = create_plan(gid, body.get("objective", ""),
+                                   body.get("success_criteria", ""),
+                                   body.get("topology_policy", "solo_first"))
+                if not plan:
+                    return self._send(404, {"error": "unknown goal"})
+                return self._send(200, plan)
+
+            if len(parts) == 4 and parts[0] == "api" and parts[1] == "plans" \
+                    and parts[3] == "replan":
+                pid = parts[2]
+                plan = replan(pid, body.get("reason", "manual replan"),
+                              body.get("changes"))
+                if not plan:
+                    return self._send(404, {"error": "unknown plan"})
+                return self._send(200, plan)
+
+            if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "tasks":
+                gid = parts[2]
+                task, err = create_task(gid, body)
+                if err:
+                    return self._send(err.get("code", 400), err)
+                return self._send(200, task)
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "clarify":
+                tid = parts[2]
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        return self._send(404, {"error": "unknown task"})
+                    if task["status"] != "needs_input":
+                        return self._send(409, {"error": "task is not awaiting clarification"})
+                    if not isinstance(body.get("success_criteria"), str) or not body["success_criteria"].strip():
+                        return self._send(400, {"error": "non-empty success_criteria required"})
+                    if body.get("success_criteria"):
+                        task["success_criteria"] = body["success_criteria"]
+                    if body.get("input_contract"):
+                        task["input_contract"] = body["input_contract"]
+                    task["status"] = "open"
+                    task["task_version"] += 1
+                    ledger_append("clarification_provided",
+                                  {"success_criteria": task["success_criteria"]},
+                                  actor=body.get("by", "human"),
+                                  goal_id=task["goal_id"], task_id=tid,
+                                  prior_version=task["task_version"] - 1)
+                    save_state()
+                emit("task_open", {"task_id": tid})
+                decision = select_topology(state["tasks"][tid])
+                with lock:
+                    t = state["tasks"][tid]
+                    t["topology"] = decision["output"]["topology"]
+                    save_state()
+                    out = dict(t)
+                out["orchestration"] = decision
+                return self._send(200, out)
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "claim":
+                tid = parts[2]
+                key = body.get("idempotency_key")
+                dup = check_idempotency(key)
+                if dup:
+                    return self._send(200, dup)
+                sweep_expired_claims()
+                with lock:
+                    task = state["tasks"].get(tid)
+                    aid = body.get("agent_id")
+                    if not task:
+                        return self._send(404, {"error": "unknown task"})
+                    if aid not in state["agents"]:
+                        return self._send(404, {"error": "unknown agent"})
+                    if task["status"] != "open":
+                        return self._send(409, {"error": f"task is {task['status']}"})
+                    if any(state["tasks"].get(d, {}).get("status") != "done" for d in task.get("dependencies", [])):
+                        return self._send(409, {"error": "dependencies not completed"})
+                    space_error = world.claim_error(state, aid, task["goal_id"])
+                    if space_error:
+                        return self._send(space_error["code"], space_error)
+                    # A new attempt must not inherit rejected artifacts or progress.
+                    task["artifact_ids"] = []
+                    task["progress"] = []
+                    task["stall_count"] = 0
+                    task["verification_receipt"] = None
+                    task["settlement_receipt"] = None
+                    goal = state["goals"].get(task["goal_id"], {})
+                    bounty = task.get("bounty", 10)
+                    if bounty > goal.get("budget_available", 0):
+                        return self._send(409, {"error": "insufficient goal budget for bounty"})
+                    goal["budget_available"] = round(goal.get("budget_available", 0) - bounty, 2)
+                    task["escrow"] = bounty
+                    task["status"] = "claimed"
+                    task["agent_id"] = aid
+                    task["claimed_at"] = utcnow()
+                    task["claim_expires"] = utcnow() + CLAIM_WINDOW
+                    task["lease"] = {"holder": aid, "expires": task["claim_expires"],
+                                     "last_progress_at": utcnow()}
+                    task["task_version"] += 1
+                    ledger_append("task_leased",
+                                  {"agent_id": aid, "bounty": bounty, "escrow": bounty,
+                                   "lease_expires": task["claim_expires"]},
+                                  actor=aid, goal_id=task["goal_id"], task_id=tid,
+                                  idempotency_key=key,
+                                  prior_version=task["task_version"] - 1)
+                    save_state()
+                    out = dict(task)
+                emit("task_claimed", {"task_id": tid, "agent_id": aid,
+                                      "bounty": bounty, "escrow": bounty})
+                record_idempotency(key, {"task": out})
+                return self._send(200, {"task": out})
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "progress":
+                tid = parts[2]
+                key = body.get("idempotency_key")
+                dup = check_idempotency(key)
+                if dup:
+                    return self._send(200, dup)
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        return self._send(404, {"error": "unknown task"})
+                    if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
+                        return self._send(409, {"error": "task not claimed by this agent"})
+                    cp = {"at": utcnow(), "note": body.get("note", ""),
+                          "progress_pct": clamp01(body.get("progress_pct", 0.0), 0.0)}
+                    task["progress"].append(cp)
+                    task["progress"] = task["progress"][-50:]
+                    task["lease"]["last_progress_at"] = utcnow()
+                    task["lease"]["expires"] = utcnow() + CLAIM_WINDOW  # progress renews lease
+                    task["claim_expires"] = task["lease"]["expires"]
+                    ledger_append("progress_recorded", cp, actor=body.get("agent_id"),
+                                  goal_id=task["goal_id"], task_id=tid,
+                                  idempotency_key=key)
+                    save_state()
+                    out = {"task_id": tid, "checkpoint": cp,
+                           "checkpoints": len(task["progress"])}
+                emit("progress_recorded", {"task_id": tid, "checkpoint": cp})
+                record_idempotency(key, out)
+                return self._send(200, out)
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "artifacts":
+                tid = parts[2]
+                res = publish_artifact(tid, body.get("agent_id"), body.get("kind"),
+                                       body.get("name"), body.get("content"),
+                                       body.get("media_type"),
+                                       body.get("idempotency_key"))
+                if res.get("error"):
+                    return self._send(res.get("code", 404), res)
+                return self._send(200, res)
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "complete":
+                tid = parts[2]
+                key = body.get("idempotency_key")
+                dup = check_idempotency(key)
+                if dup:
+                    return self._send(200, dup)
+                with lock:
+                    task = state["tasks"].get(tid)
+                    if not task:
+                        return self._send(404, {"error": "unknown task"})
+                    if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
+                        return self._send(409, {"error": "task not claimed by this agent"})
+                    task["status"] = "pending_verification"
+                    task["result"] = body.get("result", "")
+                    task["completed_at"] = utcnow()
+                    task["task_version"] += 1
+                    _st = state["agent_stats"].setdefault(body.get("agent_id"),
+                                                         blank_agent_stats())
+                    _st["completed"] += 1
+                    if task.get("claimed_at"):
+                        _st["work_seconds"] += max(0.0, task["completed_at"] - task["claimed_at"])
+                    ledger_append("task_submitted",
+                                  {"result_chars": len(task["result"] or "")},
+                                  actor=body.get("agent_id"), goal_id=task["goal_id"],
+                                  task_id=tid, idempotency_key=key,
+                                  prior_version=task["task_version"] - 1)
+                    save_state()
+                    out = dict(task)
+                emit("task_completed", {"task_id": tid, "agent_id": task["agent_id"],
+                                        "result": task["result"]})
+                record_idempotency(key, {"task": out})
+                return self._send(200, {"task": out})
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "verify":
+                tid = parts[2]
+                res = verify_task(
+                    tid, body.get("approved"),
+                    approved_credits=body.get("approved_credits"),
+                    verifier_agent_id=body.get("verifier_agent_id"),
+                    quality=body.get("quality", 0.5),
+                    confidence=body.get("confidence", 0.5),
+                    rubric=body.get("rubric"),
+                    checks=body.get("checks"),
+                    artifact_scores=body.get("artifact_scores"),
+                    idempotency_key=body.get("idempotency_key"))
+                if res.get("error"):
+                    return self._send(res.get("code", 400), res)
+                return self._send(200, res)
+
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "cancel":
+                tid = parts[2]
+                t = cancel_task(tid, by=body.get("by", "human"),
+                                reason=body.get("reason", "cancelled"))
+                if not t:
+                    return self._send(404, {"error": "unknown or terminal task"})
+                return self._send(200, {"task": t})
+
+            if parts == ["api", "messages"]:
+                frm = body.get("from_agent")
+                to = body.get("to_agent")
+                text = body.get("text", "")
+                if not text:
+                    return self._send(400, {"error": "text required"})
+                with lock:
+                    if frm not in state["agents"]:
+                        return self._send(404, {"error": "unknown from_agent"})
+                    if to and to not in state["agents"]:
+                        return self._send(404, {"error": "unknown to_agent"})
+                    state["msg_seq"] += 1
+                    msg = {"seq": state["msg_seq"], "id": new_id("msg"),
+                           "from_agent": frm, "to_agent": to,
+                           "goal_id": body.get("goal_id"), "text": text,
+                           "at": utcnow()}
+                    state["messages"].append(msg)
+                    state["messages"] = state["messages"][-500:]
+                    save_state()
+                emit("message_sent", {"message": msg})
+                return self._send(200, msg)
+
+            if len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
+                    and parts[3] == "context":
+                gid = parts[2]
+                key = body.get("key")
+                if not key:
+                    return self._send(400, {"error": "key required"})
+                with lock:
+                    ns = state["context"].setdefault(gid, {})
+                    entry = ns.get(key)
+                    if not entry or entry.get("kind") != "value":
+                        entry = {"kind": "value", "history": []}
+                    entry["value"] = body.get("value")
+                    entry["updated_by"] = body.get("agent_id")
+                    entry["updated_at"] = utcnow()
+                    entry["history"].append({"value": body.get("value"),
+                                            "by": body.get("agent_id"),
+                                            "at": utcnow()})
+                    entry["history"] = entry["history"][-20:]
+                    ns[key] = entry
+                    save_state()
+                emit("context_updated", {"goal_id": gid, "key": key, "kind": "value",
+                                        "by": body.get("agent_id")})
+                return self._send(200, {"ok": True, "entry": entry})
+
+            if len(parts) == 5 and parts[0] == "api" and parts[1] == "goals" \
+                    and parts[3] == "context" and parts[4] == "append":
+                gid = parts[2]
+                key = body.get("key")
+                if not key:
+                    return self._send(400, {"error": "key required"})
+                with lock:
+                    ns = state["context"].setdefault(gid, {})
+                    entry = ns.get(key)
+                    if not entry or entry.get("kind") != "log":
+                        entry = {"kind": "log", "log": []}
+                    entry["log"].append({"entry": body.get("entry"),
+                                         "by": body.get("agent_id"),
+                                         "at": utcnow()})
+                    entry["log"] = entry["log"][-100:]
+                    ns[key] = entry
+                    save_state()
+                emit("context_updated", {"goal_id": gid, "key": key, "kind": "log",
+                                        "by": body.get("agent_id")})
+                return self._send(200, {"ok": True, "entry": entry})
+
+            if parts == ["a2a"]:
+                return self._handle_a2a(body)
+
+
+            if parts[:2] == ["api", "games"]:
+                return self._route_games_post(parts[2:], body)
+            self._send(404, {"error": "not found"})
+
+        # ---------- A2A (minimal JSON-RPC slice) ----------
+    # ------------------------------------------------- rooms ---
+    # Authenticated, isolated collaboration scopes. The lobby API above is
+    # unchanged (localhost pilot, no auth). Every room endpoint requires a
+    # bearer token except room creation (bootstrap) and invite redemption.
+
+    def _bearer_token(self):
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return None
+        token = auth[len("Bearer "):].strip()
+        return token or None
+
+    def _room_bearer(self, room):
+        """Authenticate the Authorization header against the room's credential
+        map. Returns the agent id, or None. A removed member is rejected even
+        if a stale auth entry survived."""
+        token = self._bearer_token()
+        if not token:
+            return None
+        agent_id = room["auth"].get(token_hash(token))
+        return agent_id if agent_id in room["members"] else None
+
+    def _room_public(self, room, caller=None):
+        """Directory-safe room metadata. caller_agent_id is the
+        bearer-authenticated caller (already sanitized: an agent id string)."""
+        return {"id": room["id"], "name": room["name"],
+                "created_at": room["created_at"],
+                "owner_agent_id": room["owner_agent_id"],
+                "caller_agent_id": caller,
+                "members": [{"agent_id": aid,
+                             "name": room["agents"].get(aid, {}).get("name", aid),
+                             "role": m["role"], "joined_at": m["joined_at"]}
+                            for aid, m in room["members"].items()]}
+
+    def _room_policy(self, room):
+        return {"auth_required": True, "auth_scheme": "bearer",
+                "room_id": room["id"], "max_agents": ROOM_MAX_AGENTS,
+                "invite_ttl_default_seconds": INVITE_DEFAULT_TTL,
+                "public_join": False, "credits_are_non_cash": True,
+                "note": ("Room endpoints require 'Authorization: Bearer <token>'. "
+                         "Membership is invite-only; there is no public join.")}
+
+    def _room_route_get(self):
+        """Route GET /api/rooms/... . Returns True when the request was handled."""
+        parsed = urlparse(self.path)
+        parts = [p for p in parsed.path.split("/") if p]
+        if parts[:2] != ["api", "rooms"]:
+            return False
+        if len(parts) == 2:
+            # Room directory: ids, names, member counts only. Invite tokens and
+            # membership details stay behind member auth. Operator-gated in
+            # public mode so strangers cannot enumerate rooms.
+            if not self._operator_ok():
+                self._send(403, {"error": "operator token required"})
+                return True
             with lock:
-                self._send(200, playground_card())
-        elif len(parts) == 2 and parts[0] == "avatars" and parts[1] in (
-                "plush1.png", "plush2.png", "plush3.png", "plush4.png"):
-            fp = os.path.join(AVATAR_DIR, parts[1])
-            if not os.path.exists(fp):
-                return self._send(404, {"error": "avatar not found"})
-            with open(fp, "rb") as f:
-                self._send(200, f.read(), "image/png")
-        elif parsed.path in ("/assets/campus.js", "/assets/campus-layout.js",
-                             "/assets/campus-navigation.js", "/assets/campus-interactions.js",
-                             "/assets/campus-animation.js", "/assets/vendor/three-pathfinding.module.js",
-                             "/assets/vendor/three.module.js", "/assets/vendor/three.core.js"):
-            # Exact allowlist, never an arbitrary filesystem/static-file route.
-            with open(os.path.join(ROOT, parsed.path.lstrip("/")), "rb") as f:
-                self._send(200, f.read(), "text/javascript; charset=utf-8")
-        elif parsed.path == "/api/state":
-            with lock:
-                snap = {k: v for k, v in state.items()
-                        if k not in ("server_salt", "idempotency")}
-                # Sanitize games: current-round moves are never exposed on a
-                # public read surface (see games.public_view).
-                snap["games"] = {
-                    gid: games.public_view(g)
-                    for gid, g in state["games"].items()}
+                rooms = [{"id": r["id"], "name": r["name"],
+                          "created_at": r["created_at"],
+                          "members": len(r["members"])}
+                         for r in state["rooms"].values()]
+            self._send(200, {"rooms": rooms})
+            return True
+        rid, rest = parts[2], parts[3:]
+        if rest == ["events"]:
+            return self._room_sse(rid, parsed)
+        with lock:
+            room = state["rooms"].get(rid)
+            if room is None:
+                self._send(404, {"error": "unknown room"})
+                return True
+            sweep_expired_invites(room)
+            caller = self._room_bearer(room)
+            if caller is None:
+                self._send(401, {"error": "room bearer token required"})
+                return True
+            if rest == []:
+                self._send(200, self._room_public(room, caller))
+                return True
+            if rest == ["policy"]:
+                self._send(200, self._room_policy(room))
+                return True
+            if rest == ["invites"]:
+                # Owner-only invite lifecycle listing: metadata only, never
+                # token hashes or raw tokens.
+                if room["members"].get(caller, {}).get("role") != "owner":
+                    self._send(403, {"error": "only the room owner can list invites"})
+                    return True
+                sweep_expired_invites(room)
+                self._send(200, {"room_id": rid,
+                                 "invites": [invite_public(inv)
+                                             for inv in room["invites"].values()]})
+                return True
+            if rest == ["state"]:
+                out = _public_room_state_locked(room)
+                self._send(200, out)
+                return True
+            if rest == ["world"]:
+                with room_scope(room):
+                    snap = world.snapshot(state)
+                snap["authenticated"] = True
                 self._send(200, snap)
-        elif parsed.path == "/api/world":
-            with lock:
-                self._send(200, world.snapshot(state))
-        elif parsed.path == "/api/policy":
-            with lock:
-                self._send(200, state["policy"])
-        elif parsed.path == "/api/ledger":
-            qs = parse_qs(parsed.query)
+                return True
+            if rest and rest[0] == "games":
+                # Games are lobby-scoped and operator-gated. Room routes never
+                # serve them: neither lobby game data nor its side effects may
+                # cross the room boundary (game sweeps emit into the active
+                # room's event stream while room_scope is held).
+                self._send(404, {"error": "not found"})
+                return True
+            # Rewrite into the lobby path so the shared implementation serves
+            # it on the room's isolated partition.
+            rewritten = "/api/" + "/".join(rest)
+            if parsed.query:
+                rewritten += "?" + parsed.query
+            global _active_caller
+            _active_caller = caller
+            try:
+                with room_scope(room):
+                    self._dispatch_get(["api"] + rest, urlparse(rewritten))
+            finally:
+                _active_caller = None
+        return True
+
+    def _room_stream_valid(self, rid, token, agent_id, sub):
+        """Revalidate a room SSE subscription: the room must exist, the agent
+        must still be a member, and the bearer token must still map to them.
+        Call with or without lock (takes it itself)."""
+        with lock:
+            if sub not in subscribers:
+                return False
+            room = state["rooms"].get(rid)
+            if room is None:
+                return False
+            if agent_id not in room.get("members", {}):
+                return False
+            if room["auth"].get(token_hash(token)) != agent_id:
+                return False
+            return True
+
+    def _room_sse_write(self, payload):
+        """Write one SSE payload with bounded, non-blocking socket I/O.
+
+        The caller MUST hold the global lock: the final authorization gate
+        and this write run in a single critical section, so a revocation
+        (which also needs the lock) is serialized strictly before or after
+        delivery — a payload is never written after its stream's
+        authorization was revoked, and there is no seam between the gate
+        and the write for a revocation to land in.
+
+        The socket is switched to non-blocking for the write so a slow or
+        dead client cannot stall the server: if the client's receive buffer
+        is full the write raises BlockingIOError immediately instead of
+        blocking, and the caller closes the stream (the client reconnects
+        and replays from its last seq). Returns True when the payload was
+        fully handed to the socket, False when the client is not keeping
+        up."""
+        self.connection.setblocking(False)
+        try:
+            self.wfile.write(payload)
+            self.wfile.flush()
+        except BlockingIOError:
+            return False
+        finally:
+            self.connection.settimeout(20)
+        return True
+
+    def _room_stream_close(self, sub):
+        """Close a room SSE stream and purge any queued private payloads.
+
+        Also force close_connection: the handler sends
+        "Connection: keep-alive" (which flips close_connection off in
+        CPython's send_header), so without this the server would park the
+        socket waiting for a next request instead of delivering EOF."""
+        with lock:
+            while True:
+                try:
+                    sub.get_nowait()
+                except queue.Empty:
+                    break
+            subscribers.pop(sub, None)
+            sse_owner.pop(sub, None)
+            sse_gen[sub] = sse_gen.get(sub, 0) + 1
+        self.close_connection = True
+
+    def _room_sse(self, rid, parsed):
+        """Room-scoped server-sent events. The bearer token travels in the
+        Authorization header (fetch streaming); native EventSource clients
+        that cannot set headers may use ?token= instead. The server accepts
+        ?token= on any connection — it cannot see TLS terminated at a
+        reverse proxy — so public deployments MUST reject or strip query
+        credentials at the proxy (the Caddy template in PR #36 does this).
+        Membership is revalidated before replay, after every dequeue and on
+        every replay write, and on idle; a per-subscriber generation counter
+        (bumped under lock on every revocation) closes the check-to-delivery
+        race: the final authorization gate and the socket write run in one
+        critical section under the global lock, so revocation is serialized
+        strictly before or after delivery and a payload dequeued before
+        member-removal or room-deletion is dropped, never written. The
+        write itself is non-blocking (see _room_sse_write), so a slow
+        client can never stall the server — its stream is closed instead.
+        Revoked or deleted streams are closed with their queued payloads
+        purged."""
+        qs = parse_qs(parsed.query)
+        try:
             since = int(qs.get("since", [0])[0])
-            gid = qs.get("goal_id", [None])[0]
-            typ = qs.get("type", [None])[0]
-            with lock:
-                evs = [e for e in state["ledger"]
-                       if e["seq"] > since
-                       and (gid is None or e.get("goal_id") == gid)
-                       and (typ is None or e.get("type") == typ)]
-                self._send(200, {"events": evs[-500:], "digest": ledger_digest(),
-                                 "ledger_seq": state["ledger_seq"]})
-        elif parsed.path == "/api/events":
-            qs = parse_qs(parsed.query)
-            since = int(qs.get("since", [0])[0])
+        except (ValueError, TypeError):
+            since = 0
+        token = None
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[len("Bearer "):].strip() or None
+        if not token:
+            token = qs.get("token", [None])[0]
+        sub = queue.Queue(maxsize=256)
+        with lock:
+            room = state["rooms"].get(rid)
+            if room is None:
+                self._send(404, {"error": "unknown room"})
+                return True
+            agent_id = room["auth"].get(token_hash(token)) if token else None
+            if agent_id not in room["members"]:
+                self._send(401, {"error": "room bearer token required"})
+                return True
+            subscribers[sub] = rid
+            sse_owner[sub] = agent_id
+            sse_gen[sub] = 0
+            gen = 0
+            replay = [ev for ev in room["events"] if ev["seq"] > since]
+        try:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            sub = queue.Queue(maxsize=256)
-            try:
+            self.connection.settimeout(20)
+            for ev in replay:
+                payload = f"data: {json.dumps(ev)}\n\n".encode()
                 with lock:
-                    replay = [ev for ev in state["events"] if ev["seq"] > since]
-                    subscribers.add(sub)
-                self.connection.settimeout(20)
-                for ev in replay:
-                    self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-                self.wfile.flush()
-                while True:
-                    try:
-                        payload = sub.get(timeout=15)
-                    except queue.Empty:
-                        with lock:
-                            if sub not in subscribers:
-                                break
-                        payload = b": ping\n\n"
-                    self.wfile.write(payload)
-                    self.wfile.flush()
-            except (OSError, TimeoutError):
-                pass
-            finally:
+                    # Final delivery gate, evaluated INLINE (not via a
+                    # helper): the write below must immediately follow with
+                    # no calls in between, so a revocation — which needs
+                    # this same lock — cannot land between check and write.
+                    room = state["rooms"].get(rid)
+                    if not (sse_gen.get(sub) == gen
+                            and sub in subscribers
+                            and room is not None
+                            and agent_id in room.get("members", {})
+                            and room["auth"].get(token_hash(token)) == agent_id):
+                        self._room_stream_close(sub)
+                        return True
+                    if not self._room_sse_write(payload):
+                        # Slow/dead client: bounded delivery — drop the
+                        # stream instead of stalling the server.
+                        self._room_stream_close(sub)
+                        return True
+            while True:
+                if not self._room_stream_valid(rid, token, agent_id, sub):
+                    self._room_stream_close(sub)
+                    return True
+                try:
+                    payload = sub.get(timeout=15)
+                except queue.Empty:
+                    with lock:
+                        if sub not in subscribers:
+                            # Same keep-alive trap as _room_stream_close:
+                            # force the socket closed so the client sees EOF.
+                            self.close_connection = True
+                            break
+                    payload = b": ping\n\n"
+                # Final delivery gate AFTER dequeue: revocation may have landed
+                # while the payload sat in the queue. The gate and the write
+                # share one critical section under the global lock — no
+                # calls between them — so revocation is serialized strictly
+                # before or after delivery and can never land in between.
                 with lock:
-                    subscribers.discard(sub)
-        elif parsed.path == "/api/messages":
-            qs = parse_qs(parsed.query)
-            since = int(qs.get("since", [0])[0])
-            gid = qs.get("goal_id", [None])[0]
+                    room = state["rooms"].get(rid)
+                    if not (sse_gen.get(sub) == gen
+                            and sub in subscribers
+                            and room is not None
+                            and agent_id in room.get("members", {})
+                            and room["auth"].get(token_hash(token)) == agent_id):
+                        self._room_stream_close(sub)
+                        return True
+                    if not self._room_sse_write(payload):
+                        # Slow/dead client: bounded delivery — drop the
+                        # stream instead of stalling the server.
+                        self._room_stream_close(sub)
+                        return True
+        except (OSError, TimeoutError):
+            pass
+        finally:
             with lock:
-                msgs = [m for m in state["messages"]
-                        if m["seq"] > since and (gid is None or m.get("goal_id") == gid)]
-                self._send(200, {"messages": msgs[-100:]})
-        elif parts[:2] == ["api", "games"]:
-            # No viewer identity is accepted here: there is no authenticated
-            # agent identity on this branch, so a caller-supplied agent_id
-            # would disclose other players' hidden moves (see games.py).
-            with lock:
-                self._sweep_stale_game_rounds()
-                if len(parts) == 2:
-                    self._send(200, {"games": [
-                        games.public_view(g)
-                        for g in state["games"].values()]})
-                elif len(parts) == 3 and parts[2] in state["games"]:
-                    self._send(200, {"game": games.public_view(
-                        state["games"][parts[2]])})
-                else:
-                    self._send(404, {"error": "unknown game"})
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
-                and parts[3] == "suggest":
-            tid = parts[2]
-            with lock:
+                subscribers.pop(sub, None)
+                sse_owner.pop(sub, None)
+                sse_gen.pop(sub, None)
+        return True
+
+    def _room_route_post(self, parts, body):
+        """Route POST /api/rooms/... . Called with lock held. True = handled."""
+        if parts[:2] != ["api", "rooms"]:
+            return False
+        if len(parts) == 2:
+            # Room creation is operator-gated in public mode; rooms are never
+            # publicly creatable.
+            if not self._operator_ok():
+                self._send(403, {"error": "operator token required"})
+                return True
+            self._room_create(body)
+            return True
+        room = state["rooms"].get(parts[2])
+        if room is None:
+            self._send(404, {"error": "unknown room"})
+            return True
+        rest = parts[3:]
+        sweep_expired_invites(room)
+        if rest == ["join"]:
+            self._room_join(room, body)
+            return True
+        caller = self._room_bearer(room)
+        if caller is None:
+            self._send(401, {"error": "room bearer token required"})
+            return True
+        if rest == ["a2a"]:
+            # Room-scoped JSON-RPC with the bearer caller bound to every
+            # nested operation (same authorization rules as REST).
+            self._room_a2a(room, caller, body)
+            return True
+        if rest == ["invites"]:
+            self._room_invite_create(room, caller, body)
+            return True
+        if len(rest) == 3 and rest[0] == "invites" and rest[2] == "revoke":
+            self._room_invite_revoke(room, caller, rest[1])
+            return True
+        if len(rest) == 3 and rest[0] == "members" and rest[2] == "remove":
+            self._room_member_remove(room, caller, rest[1])
+            return True
+        if rest == ["leave"]:
+            self._room_leave(room, caller)
+            return True
+        if rest == ["delete"]:
+            self._room_delete(room, caller)
+            return True
+        err = self._enforce_room_caller(room, caller, rest, body)
+        if err:
+            self._send(err["code"], {"error": err["error"]})
+            return True
+        if rest[:2] == ["agents", "register"]:
+            # No public join: membership is invite-only.
+            self._send(403, {"error": "room membership is invite-only",
+                             "join": "/api/rooms/%s/join" % room["id"]})
+            return True
+        global _active_caller
+        _active_caller = caller
+        try:
+            with room_scope(room):
+                sweep_expired_claims()
+                self._dispatch_post(["api"] + rest, body)
+        finally:
+            _active_caller = None
+        return True
+
+    def _enforce_room_caller(self, room, caller, rest, body):
+        """In rooms the bearer token is the identity: URL/body agent ids must be
+        the caller's own. Returns an error dict or None."""
+        is_owner = room["members"].get(caller, {}).get("role") == "owner"
+        if len(rest) >= 3 and rest[0] == "agents" \
+                and rest[2] in ("heartbeat", "presence"):
+            if rest[1] != caller:
+                return {"code": 403,
+                        "error": "bearer token does not match agent"}
+        if rest == ["social"]:
+            if body.get("agent_id") != caller:
+                return {"code": 403,
+                        "error": "agent_id must match the bearer token"}
+        if rest == ["messages"]:
+            if body.get("from_agent") != caller:
+                return {"code": 403,
+                        "error": "from_agent must match the bearer token"}
+        if len(rest) == 3 and rest[0] == "tasks" and rest[2] in (
+                "claim", "progress", "artifacts", "complete"):
+            if body.get("agent_id") != caller:
+                return {"code": 403,
+                        "error": "agent_id must match the bearer token"}
+        if len(rest) == 3 and rest[0] == "tasks" and rest[2] == "verify":
+            if body.get("verifier_agent_id") != caller:
+                return {"code": 403,
+                        "error": "verifier_agent_id must match the bearer token"}
+        if len(rest) == 3 and rest[0] == "tasks" and rest[2] in (
+                "cancel", "clarify"):
+            task = room["tasks"].get(rest[1])
+            if task is None:
+                return None  # the shared handler reports the 404
+            holder = task.get("agent_id")
+            if holder not in (None, caller) and not is_owner:
+                return {"code": 403, "error":
+                        "only the claiming agent or the room owner can cancel"}
+            body["by"] = caller  # the ledger records the true actor
+        if len(rest) == 3 and rest[0] == "goals" and rest[2] == "context":
+            if body.get("agent_id") != caller:
+                return {"code": 403,
+                        "error": "agent_id must match the bearer token"}
+        return None
+
+    def _room_create(self, body):
+        """Bootstrap: creating a room registers the creator as its owner agent
+        and returns their bearer token. There is no prior credential to check;
+        on any non-loopback deployment this endpoint must sit behind the
+        deployer's own access control (see docs/ROOMS.md)."""
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return self._send(400, {"error": "room name is required"})
+        space = body.get("space", "classroom")
+        if space not in ("classroom", "playground"):
+            return self._send(400, {"error": "invalid space"})
+        if "social_enabled" in body and not isinstance(body["social_enabled"], bool):
+            return self._send(400, {"error": "social_enabled must be boolean"})
+        if len(state["rooms"]) >= 64:
+            return self._send(409, {"error": "room limit reached"})
+        room = blank_room(name.strip())
+        aid = new_id("agent")
+        agent = build_agent_record(body, aid, 0, room["id"], space)
+        room["agents"][aid] = agent
+        room["owner_agent_id"] = aid
+        room["members"][aid] = {"role": "owner", "joined_at": utcnow(),
+                                "name": agent["name"]}
+        token = new_bearer_token()
+        room["auth"][token_hash(token)] = aid
+        state["rooms"][room["id"]] = room
+        with room_scope(room):
+            ledger_append("room_created", {"name": room["name"]}, actor=aid)
+            save_state()
+        emit("room_created", {"room_id": room["id"], "name": room["name"]})
+        return self._send(200, {"room": self._room_public(room, aid),
+                                "agent": agent, "token": token})
+
+    def _room_invite_create(self, room, caller, body):
+        if room["members"].get(caller, {}).get("role") != "owner":
+            return self._send(403, {"error": "only the room owner can invite"})
+        if len(room["members"]) >= ROOM_MAX_AGENTS:
+            return self._send(409, {"error": "room is full",
+                                    "max_agents": ROOM_MAX_AGENTS})
+        ttl = body.get("ttl_seconds", INVITE_DEFAULT_TTL)
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) \
+                or not 60 <= ttl <= 30 * 86400:
+            return self._send(400, {"error": "ttl_seconds must be 60..2592000"})
+        iid = new_id("invite")
+        token = new_invite_token()
+        inv = {"id": iid, "token_hash": token_hash(token),
+               "created_by": caller, "created_at": utcnow(),
+               "expires_at": utcnow() + ttl, "ttl_seconds": ttl,
+               "label": str(body.get("label", ""))[:80],
+               "used": False, "used_by": None, "used_at": None,
+               "revoked": False}
+        room["invites"][iid] = inv
+        with room_scope(room):
+            ledger_append("invite_created",
+                          {"invite_id": iid, "ttl_seconds": ttl,
+                           "label": inv["label"]}, actor=caller)
+            save_state()
+        join_block = {"method": "POST",
+                      "endpoint": "/api/rooms/%s/join" % room["id"],
+                      "body": {"invite_token": token,
+                               "name": "Agent name"}}
+        if PUBLIC_URL:
+            join_block["join_url"] = "%s/api/rooms/%s/join" % (PUBLIC_URL,
+                                                               room["id"])
+        return self._send(200, {"invite_id": iid, "token": token,
+                                "room_id": room["id"],
+                                "join": join_block,
+                                "expires_at": inv["expires_at"]})
+
+    def _join_client_ip(self):
+        """Client IP for join rate limiting. Proxy headers are honored only
+        when the direct TCP peer is an explicitly trusted proxy
+        (PLAYGROUNDS_TRUSTED_PROXIES); otherwise the peer address is used so
+        a spoofed X-Forwarded-For cannot mint fresh buckets."""
+        peer = self.client_address[0]
+        if peer.lower() in TRUSTED_PROXIES:
+            fwd = self.headers.get("CF-Connecting-IP") or ""
+            if not fwd:
+                fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if fwd:
+                return fwd
+        return peer
+
+    def _join_limited(self):
+        """Anti-bruteforce budget for room joins. Only failed guesses consume
+        it, so legitimate joins (up to the 64-member cap) are never throttled."""
+        return not _join_ratelimit_ok(self._join_client_ip())
+
+    def _room_join(self, room, body):
+        token = body.get("invite_token")
+        if not isinstance(token, str) or not token:
+            if self._join_limited():
+                return self._send(429, {"error": "too many join attempts; slow down"})
+            return self._send(403, {"error": "a valid invite_token is required; "
+                                             "rooms have no public join"})
+        th = token_hash(token)
+        inv = next((c for c in room["invites"].values()
+                    if hmac.compare_digest(c["token_hash"], th)), None)
+        if inv is None or inv["revoked"]:
+            if self._join_limited():
+                return self._send(429, {"error": "too many join attempts; slow down"})
+            return self._send(403, {"error": "unknown or revoked invite"})
+        if inv["used"]:
+            return self._send(410, {"error": "invite already used (single-use)"})
+        if inv["expires_at"] < utcnow():
+            return self._send(410, {"error": "invite expired"})
+        if len(room["members"]) >= ROOM_MAX_AGENTS:
+            return self._send(409, {"error": "room is full",
+                                    "max_agents": ROOM_MAX_AGENTS})
+        space = body.get("space", "classroom")
+        if space not in ("classroom", "playground"):
+            return self._send(400, {"error": "invalid space"})
+        if "social_enabled" in body and not isinstance(body["social_enabled"], bool):
+            return self._send(400, {"error": "social_enabled must be boolean"})
+        with room_scope(room):
+            if space == "classroom" and not world.classroom_available(state, None, None):
+                return self._send(409, {"error": "classroom is full",
+                                        "max_agents": ROOM_MAX_AGENTS})
+        aid = new_id("agent")
+        agent = build_agent_record(body, aid, len(room["agents"]), room["id"],
+                                   space)
+        room["agents"][aid] = agent
+        room["members"][aid] = {"role": "member", "joined_at": utcnow(),
+                                "name": agent["name"]}
+        bt = new_bearer_token()
+        room["auth"][token_hash(bt)] = aid
+        inv["used"] = True
+        inv["used_by"] = aid
+        inv["used_at"] = utcnow()
+        with room_scope(room):
+            ledger_append("member_joined", {"name": agent["name"],
+                                           "invite_id": inv["id"]}, actor=aid)
+            # Membership events are emitted INSIDE the scope so only room
+            # subscribers receive member names/ids — never the lobby.
+            emit("member_joined", {"room_id": room["id"], "agent_id": aid,
+                                   "name": agent["name"]})
+            save_state()
+        return self._send(200, {"room": self._room_public(room, aid),
+                                "agent": agent, "token": bt})
+
+    def _room_invite_revoke(self, room, caller, invite_id):
+        if room["members"].get(caller, {}).get("role") != "owner":
+            return self._send(403, {"error": "only the room owner can revoke invites"})
+        inv = room["invites"].get(invite_id)
+        if inv is None:
+            return self._send(404, {"error": "unknown invite"})
+        if inv["used"]:
+            return self._send(409, {"error": "invite already used"})
+        inv["revoked"] = True
+        with room_scope(room):
+            ledger_append("invite_revoked", {"invite_id": invite_id},
+                          actor=caller)
+            save_state()
+        return self._send(200, {"ok": True, "invite_id": invite_id})
+
+    def _remove_member(self, room, caller, target_id):
+        """Shared removal: release claims, invalidate tokens, drop the agent."""
+        with room_scope(room):
+            released = release_agent_claims(target_id)
+            for th in [th for th, aid in room["auth"].items()
+                       if aid == target_id]:
+                del room["auth"][th]
+            agent = room["agents"].pop(target_id, None)
+            room["members"].pop(target_id, None)
+            ledger_append("member_removed",
+                          {"agent_id": target_id,
+                           "name": (agent or {}).get("name"),
+                           "claims_released": released}, actor=caller)
+            # Inside the scope: room subscribers are notified, the lobby is not.
+            emit("member_removed", {"room_id": room["id"],
+                                    "agent_id": target_id})
+            save_state()
+        # Close the removed member's live streams and purge queued payloads.
+        with lock:
+            _close_room_streams(room["id"], target_id)
+        return released
+
+    def _room_member_remove(self, room, caller, target_id):
+        if room["members"].get(caller, {}).get("role") != "owner":
+            return self._send(403, {"error": "only the room owner can remove members"})
+        if target_id == room["owner_agent_id"]:
+            return self._send(400, {"error": "the owner cannot be removed; "
+                                             "delete the room instead"})
+        if target_id not in room["members"]:
+            return self._send(404, {"error": "unknown member"})
+        released = self._remove_member(room, caller, target_id)
+        return self._send(200, {"ok": True, "agent_id": target_id,
+                                "claims_released": released})
+
+    def _room_leave(self, room, caller):
+        if caller == room["owner_agent_id"]:
+            return self._send(400, {"error": "the owner cannot leave; "
+                                             "delete the room instead"})
+        if caller not in room["members"]:
+            return self._send(404, {"error": "not a member"})
+        released = self._remove_member(room, caller, caller)
+        return self._send(200, {"ok": True, "claims_released": released})
+
+    def _room_delete(self, room, caller):
+        if room["members"].get(caller, {}).get("role") != "owner":
+            return self._send(403, {"error": "only the room owner can delete the room"})
+        rid = room["id"]
+        with lock:
+            _close_room_streams(rid)
+            del state["rooms"][rid]
+            save_state()
+        return self._send(200, {"ok": True, "room_id": rid})
+
+
+    def _room_a2a(self, room, caller, body):
+        """Room-scoped A2A JSON-RPC. Every nested operation is bound to the
+        bearer-authenticated caller, with the same authorization rules as the
+        REST protocol: task/send records the caller as actor, task/cancel
+        enforces the claiming-agent-or-owner rule (no by="a2a" bypass)."""
+        mid = body.get("id")
+        method = body.get("method", "")
+        params = body.get("params", {}) or {}
+
+        def ok(result):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "result": result})
+
+        def err(code, message):
+            return self._send(200, {"jsonrpc": "2.0", "id": mid,
+                                    "error": {"code": code, "message": message}})
+
+        is_owner = room["members"].get(caller, {}).get("role") == "owner"
+        if method == "card/get":
+            with room_scope(room):
+                card = playground_card()
+            card["room_id"] = room["id"]
+            return ok(card)
+        if method == "task/send":
+            gid = params.get("goal_id")
+            if not gid:
+                return err(-32602, "goal_id required")
+            with room_scope(room):
+                task, e = create_task(gid, params, actor=caller)
+            if e:
+                return err(-32000, e["error"])
+            return ok({"task_id": task["id"], "status": task["status"],
+                       "topology": task.get("topology")})
+        if method == "task/get":
+            tid = params.get("task_id")
+            with room_scope(room):
                 task = state["tasks"].get(tid)
                 if not task:
-                    self._send(404, {"error": "unknown task"})
-                else:
-                    self._send(200, {"task_id": tid,
-                                     "suggestions": suggest_agents(task)})
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
-                and parts[3] == "route":
-            tid = parts[2]
-            with lock:
+                    return err(-32000, "unknown task")
+                arts = [state["artifacts"][a]
+                        for a in task.get("artifact_ids", [])
+                        if a in state["artifacts"]]
+                task = dict(task)
+            return ok({"task": task, "artifacts": arts})
+        if method == "task/cancel":
+            tid = params.get("task_id")
+            with room_scope(room):
                 task = state["tasks"].get(tid)
                 if not task:
-                    self._send(404, {"error": "unknown task"})
-                else:
-                    self._send(200, {"task_id": tid,
-                                     "routing": learned_scores(task)})
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "tasks" \
-                and parts[3] == "topology":
-            tid = parts[2]
-            with lock:
-                task = state["tasks"].get(tid)
-                if not task:
-                    self._send(404, {"error": "unknown task"})
-                else:
-                    self._send(200, {"task_id": tid,
-                                     "topology": task.get("topology", "solo"),
-                                     "decision": latest_topology_decision(tid)})
-        elif len(parts) == 3 and parts[0] == "api" and parts[1] == "decisions":
-            did = parts[2]
-            with lock:
-                d = state["decisions"].get(did)
-                if not d:
-                    self._send(404, {"error": "unknown decision"})
-                else:
-                    self._send(200, d)
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
-                and parts[3] == "stats":
-            aid = parts[2]
-            with lock:
-                agent = state["agents"].get(aid)
-                if not agent:
-                    self._send(404, {"error": "unknown agent"})
-                else:
-                    st = state["agent_stats"].get(aid, blank_agent_stats())
-                    denom = st["verified"] + st["rejected"]
-                    success = (st["verified"] / denom) if denom else None
-                    avg = (st["work_seconds"] / st["completed"]) if st["completed"] else None
-                    self._send(200, {
-                        "agent": agent,
-                        "tasks_submitted": st["completed"],
-                        "tasks_verified": st["verified"],
-                        "tasks_rejected": st["rejected"],
-                        "success_rate": success,
-                        "avg_task_seconds": avg,
-                        "credits_earned": st["credits_earned"],
-                        "review_credits_earned": st.get("review_credits_earned", 0),
-                        "credits_balance": agent.get("credits", 0),
-                        "model": agent.get("model", "unknown"),
-                        "model_tier": agent.get("model_tier", 3),
-                    })
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
-                and parts[3] == "card":
-            aid = parts[2]
-            with lock:
-                agent = state["agents"].get(aid)
-                if not agent:
-                    self._send(404, {"error": "unknown agent"})
-                else:
-                    self._send(200, build_agent_card(agent))
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "agents" \
-                and parts[3] == "reputation":
-            aid = parts[2]
-            with lock:
-                if aid not in state["agents"]:
-                    self._send(404, {"error": "unknown agent"})
-                else:
-                    self._send(200, {"agent_id": aid,
-                                     "reputation": reputation_view(aid)})
-        elif len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
-                and parts[3] == "context":
-            gid = parts[2]
-            with lock:
-                ns = state["context"].get(gid, {})
-                self._send(200, {"goal_id": gid, "context": ns})
-        else:
-            self._send(404, {"error": "not found"})
-
-# ---------- POST ----------
-    def _post(self):
-        parsed = urlparse(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
-        body = self._request_body
-
-        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "presence":
-            res = world.move(state, parts[2], body)
-            if res.get("error"):
-                return self._send(res["code"], res)
-            emit("presence_changed", {"agent_id": parts[2], **res})
-            return self._send(200, res)
-
-        if parts == ["api", "social"]:
-            res = world.post_social(state, body, utcnow())
-            if res.get("error"):
-                return self._send(res["code"], res)
-            emit("social_posted", {"agent_id": body["agent_id"], "seq": res["message"]["seq"]})
-            return self._send(200, res)
-
-        if parts == ["api", "agents", "register"]:
-            with lock:
-                space = body.get("space", "classroom")  # legacy connectors retain their lobby
-                if space not in ("classroom", "playground"):
-                    return self._send(400, {"error": "invalid space"})
-                if "social_enabled" in body and not isinstance(body["social_enabled"], bool):
-                    return self._send(400, {"error": "social_enabled must be boolean"})
-                if len(state["agents"]) >= world.MAX_REGISTERED:
-                    return self._send(409, {"error": "pilot registration limit reached"})
-                if space == "classroom" and not world.classroom_available(state, None, None):
-                    return self._send(409, {"error": "playground is full",
-                                            "max_agents": MAX_AGENTS})
-                aid = new_id("agent")
-                slot = len(state["agents"])  # 0-based plush slot
-                agent = {
-                    "id": aid,
-                    "name": body.get("name", "Agent"),
-                    "avatar": body.get("avatar", "\U0001f916"),
-                    "color": body.get("color", "#7c6cf0"),
-                    "plush": f"plush{(slot % 4) + 1}.png",
-                    "capabilities": body.get("capabilities", []),
-                    "model": body.get("model", "unknown"),
-                    "model_tier": model_tier(body.get("model", "unknown")),
-                    "agent_card": {
-                        "description": body.get("description", ""),
-                        "version": body.get("card_version", "0.2.0"),
-                        "provider": body.get("provider", "unknown"),
-                        "skills": body.get("skills", []),
-                        "input_modalities": body.get("input_modalities", ["text"]),
-                        "output_modalities": body.get("output_modalities", ["text"]),
-                        "cost_per_task": body.get("cost_per_task"),
-                        "rate_limits": body.get("rate_limits", {}),
-                        "auth": body.get("auth", {}),
-                        "availability": body.get("availability", "idle"),
-                        "max_bounty": body.get("max_bounty"),
-                        "supportedInterfaces": body.get("supportedInterfaces", []),
-                    },
-                    "scopes": body.get("scopes", ["*"]),
-                    "tenant_id": body.get("tenant_id", "local"),
-                    "observed": {"tasks": 0, "verified": 0, "quality_sum": 0.0,
-                                 "latency_sum": 0.0, "cost_sum": 0.0},
-                    "credits": 0,
-                    "status": "idle",
-                    "current_task": None,
-                    "location": {"space": space, "goal_id": None},
-                    "social_enabled": body.get("social_enabled", False),
-                    "last_heartbeat": utcnow(),
-                }
-                state["agents"][aid] = agent
-                ledger_append("agent_registered",
-                              {"name": agent["name"], "plush": agent["plush"],
-                               "skills": [s.get("id") for s in
-                                          agent["agent_card"]["skills"]] or
-                              agent["capabilities"]},
-                              actor=aid)
-                save_state()
-            emit("agent_registered", {"agent": agent})
-            return self._send(200, {"id": aid, "agent": agent,
-                                    "card": build_agent_card(agent)})
-
-        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[3] == "heartbeat":
-            aid = parts[2]
-            sweep_expired_claims()
-            detect_stalls()
-            with lock:
-                agent = state["agents"].get(aid)
-                if not agent:
-                    return self._send(404, {"error": "unknown agent"})
-                agent["status"] = body.get("status", agent["status"])
-                if "current_task" in body:
-                    agent["current_task"] = body["current_task"]
-                agent["last_heartbeat"] = utcnow()
-                save_state()
-            emit("agent_heartbeat", {"agent_id": aid, "status": agent["status"],
-                                    "current_task": agent["current_task"]})
-            return self._send(200, {"ok": True})
-
-        if parts == ["api", "goals"]:
-            with lock:
-                gid = new_id("goal")
-                budget = body.get("budget", 1000)
-                goal = {"id": gid, "title": body.get("title", "Untitled goal"),
-                        "description": body.get("description", ""),
-                        "budget": budget, "budget_available": budget,
-                        "budget_spent": 0,
-                        "tenant_id": body.get("tenant_id", "local"),
-                        "review_pool_pct": float(body.get("review_pool_pct", 0.10)),
-                        "plan_ids": [],
-                        "created_at": utcnow()}
-                state["goals"][gid] = goal
-                ledger_append("goal_created", {"title": goal["title"],
-                                              "budget": budget},
-                              actor="human", goal_id=gid)
-                save_state()
-            emit("goal_created", {"goal": goal})
-            return self._send(200, goal)
-
-        if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "plans":
-            gid = parts[2]
-            plan = create_plan(gid, body.get("objective", ""),
-                               body.get("success_criteria", ""),
-                               body.get("topology_policy", "solo_first"))
-            if not plan:
-                return self._send(404, {"error": "unknown goal"})
-            return self._send(200, plan)
-
-        if len(parts) == 4 and parts[0] == "api" and parts[1] == "plans" \
-                and parts[3] == "replan":
-            pid = parts[2]
-            plan = replan(pid, body.get("reason", "manual replan"),
-                          body.get("changes"))
-            if not plan:
-                return self._send(404, {"error": "unknown plan"})
-            return self._send(200, plan)
-
-        if len(parts) == 4 and parts[:2] == ["api", "goals"] and parts[3] == "tasks":
-            gid = parts[2]
-            task, err = create_task(gid, body)
-            if err:
-                return self._send(err.get("code", 400), err)
-            return self._send(200, task)
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "clarify":
-            tid = parts[2]
-            with lock:
-                task = state["tasks"].get(tid)
-                if not task:
-                    return self._send(404, {"error": "unknown task"})
-                if task["status"] != "needs_input":
-                    return self._send(409, {"error": "task is not awaiting clarification"})
-                if not isinstance(body.get("success_criteria"), str) or not body["success_criteria"].strip():
-                    return self._send(400, {"error": "non-empty success_criteria required"})
-                if body.get("success_criteria"):
-                    task["success_criteria"] = body["success_criteria"]
-                if body.get("input_contract"):
-                    task["input_contract"] = body["input_contract"]
-                task["status"] = "open"
-                task["task_version"] += 1
-                ledger_append("clarification_provided",
-                              {"success_criteria": task["success_criteria"]},
-                              actor=body.get("by", "human"),
-                              goal_id=task["goal_id"], task_id=tid,
-                              prior_version=task["task_version"] - 1)
-                save_state()
-            emit("task_open", {"task_id": tid})
-            decision = select_topology(state["tasks"][tid])
-            with lock:
-                t = state["tasks"][tid]
-                t["topology"] = decision["output"]["topology"]
-                save_state()
-                out = dict(t)
-            out["orchestration"] = decision
-            return self._send(200, out)
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "claim":
-            tid = parts[2]
-            key = body.get("idempotency_key")
-            dup = check_idempotency(key)
-            if dup:
-                return self._send(200, dup)
-            sweep_expired_claims()
-            with lock:
-                task = state["tasks"].get(tid)
-                aid = body.get("agent_id")
-                if not task:
-                    return self._send(404, {"error": "unknown task"})
-                if aid not in state["agents"]:
-                    return self._send(404, {"error": "unknown agent"})
-                if task["status"] != "open":
-                    return self._send(409, {"error": f"task is {task['status']}"})
-                if any(state["tasks"].get(d, {}).get("status") != "done" for d in task.get("dependencies", [])):
-                    return self._send(409, {"error": "dependencies not completed"})
-                space_error = world.claim_error(state, aid, task["goal_id"])
-                if space_error:
-                    return self._send(space_error["code"], space_error)
-                # A new attempt must not inherit rejected artifacts or progress.
-                task["artifact_ids"] = []
-                task["progress"] = []
-                task["stall_count"] = 0
-                task["verification_receipt"] = None
-                task["settlement_receipt"] = None
-                goal = state["goals"].get(task["goal_id"], {})
-                bounty = task.get("bounty", 10)
-                if bounty > goal.get("budget_available", 0):
-                    return self._send(409, {"error": "insufficient goal budget for bounty"})
-                goal["budget_available"] = round(goal.get("budget_available", 0) - bounty, 2)
-                task["escrow"] = bounty
-                task["status"] = "claimed"
-                task["agent_id"] = aid
-                task["claimed_at"] = utcnow()
-                task["claim_expires"] = utcnow() + CLAIM_WINDOW
-                task["lease"] = {"holder": aid, "expires": task["claim_expires"],
-                                 "last_progress_at": utcnow()}
-                task["task_version"] += 1
-                ledger_append("task_leased",
-                              {"agent_id": aid, "bounty": bounty, "escrow": bounty,
-                               "lease_expires": task["claim_expires"]},
-                              actor=aid, goal_id=task["goal_id"], task_id=tid,
-                              idempotency_key=key,
-                              prior_version=task["task_version"] - 1)
-                save_state()
-                out = dict(task)
-            emit("task_claimed", {"task_id": tid, "agent_id": aid,
-                                  "bounty": bounty, "escrow": bounty})
-            record_idempotency(key, {"task": out})
-            return self._send(200, {"task": out})
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "progress":
-            tid = parts[2]
-            key = body.get("idempotency_key")
-            dup = check_idempotency(key)
-            if dup:
-                return self._send(200, dup)
-            with lock:
-                task = state["tasks"].get(tid)
-                if not task:
-                    return self._send(404, {"error": "unknown task"})
-                if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
-                    return self._send(409, {"error": "task not claimed by this agent"})
-                cp = {"at": utcnow(), "note": body.get("note", ""),
-                      "progress_pct": clamp01(body.get("progress_pct", 0.0), 0.0)}
-                task["progress"].append(cp)
-                task["progress"] = task["progress"][-50:]
-                task["lease"]["last_progress_at"] = utcnow()
-                task["lease"]["expires"] = utcnow() + CLAIM_WINDOW  # progress renews lease
-                task["claim_expires"] = task["lease"]["expires"]
-                ledger_append("progress_recorded", cp, actor=body.get("agent_id"),
-                              goal_id=task["goal_id"], task_id=tid,
-                              idempotency_key=key)
-                save_state()
-                out = {"task_id": tid, "checkpoint": cp,
-                       "checkpoints": len(task["progress"])}
-            emit("progress_recorded", {"task_id": tid, "checkpoint": cp})
-            record_idempotency(key, out)
-            return self._send(200, out)
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "artifacts":
-            tid = parts[2]
-            res = publish_artifact(tid, body.get("agent_id"), body.get("kind"),
-                                   body.get("name"), body.get("content"),
-                                   body.get("media_type"),
-                                   body.get("idempotency_key"))
-            if res.get("error"):
-                return self._send(res.get("code", 404), res)
-            return self._send(200, res)
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "complete":
-            tid = parts[2]
-            key = body.get("idempotency_key")
-            dup = check_idempotency(key)
-            if dup:
-                return self._send(200, dup)
-            with lock:
-                task = state["tasks"].get(tid)
-                if not task:
-                    return self._send(404, {"error": "unknown task"})
-                if task["status"] != "claimed" or task["agent_id"] != body.get("agent_id"):
-                    return self._send(409, {"error": "task not claimed by this agent"})
-                task["status"] = "pending_verification"
-                task["result"] = body.get("result", "")
-                task["completed_at"] = utcnow()
-                task["task_version"] += 1
-                _st = state["agent_stats"].setdefault(body.get("agent_id"),
-                                                     blank_agent_stats())
-                _st["completed"] += 1
-                if task.get("claimed_at"):
-                    _st["work_seconds"] += max(0.0, task["completed_at"] - task["claimed_at"])
-                ledger_append("task_submitted",
-                              {"result_chars": len(task["result"] or "")},
-                              actor=body.get("agent_id"), goal_id=task["goal_id"],
-                              task_id=tid, idempotency_key=key,
-                              prior_version=task["task_version"] - 1)
-                save_state()
-                out = dict(task)
-            emit("task_completed", {"task_id": tid, "agent_id": task["agent_id"],
-                                    "result": task["result"]})
-            record_idempotency(key, {"task": out})
-            return self._send(200, {"task": out})
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "verify":
-            tid = parts[2]
-            res = verify_task(
-                tid, body.get("approved"),
-                approved_credits=body.get("approved_credits"),
-                verifier_agent_id=body.get("verifier_agent_id"),
-                quality=body.get("quality", 0.5),
-                confidence=body.get("confidence", 0.5),
-                rubric=body.get("rubric"),
-                checks=body.get("checks"),
-                artifact_scores=body.get("artifact_scores"),
-                idempotency_key=body.get("idempotency_key"))
-            if res.get("error"):
-                return self._send(res.get("code", 400), res)
-            return self._send(200, res)
-
-        if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "cancel":
-            tid = parts[2]
-            t = cancel_task(tid, by=body.get("by", "human"),
-                            reason=body.get("reason", "cancelled"))
+                    return err(-32000, "unknown task")
+                holder = task.get("agent_id")
+                if holder not in (None, caller) and not is_owner:
+                    return err(-32001, "only the claiming agent or the room "
+                                       "owner can cancel")
+                t = cancel_task(tid, by=caller,
+                                reason=params.get("reason", "a2a cancel"))
             if not t:
-                return self._send(404, {"error": "unknown or terminal task"})
-            return self._send(200, {"task": t})
+                return err(-32000, "unknown or terminal task")
+            return ok({"task_id": t["id"], "status": t["status"]})
+        return err(-32601, f"method not found: {method}")
 
-        if parts == ["api", "messages"]:
-            frm = body.get("from_agent")
-            to = body.get("to_agent")
-            text = body.get("text", "")
-            if not text:
-                return self._send(400, {"error": "text required"})
-            with lock:
-                if frm not in state["agents"]:
-                    return self._send(404, {"error": "unknown from_agent"})
-                if to and to not in state["agents"]:
-                    return self._send(404, {"error": "unknown to_agent"})
-                state["msg_seq"] += 1
-                msg = {"seq": state["msg_seq"], "id": new_id("msg"),
-                       "from_agent": frm, "to_agent": to,
-                       "goal_id": body.get("goal_id"), "text": text,
-                       "at": utcnow()}
-                state["messages"].append(msg)
-                state["messages"] = state["messages"][-500:]
-                save_state()
-            emit("message_sent", {"message": msg})
-            return self._send(200, msg)
-
-        if len(parts) == 4 and parts[0] == "api" and parts[1] == "goals" \
-                and parts[3] == "context":
-            gid = parts[2]
-            key = body.get("key")
-            if not key:
-                return self._send(400, {"error": "key required"})
-            with lock:
-                ns = state["context"].setdefault(gid, {})
-                entry = ns.get(key)
-                if not entry or entry.get("kind") != "value":
-                    entry = {"kind": "value", "history": []}
-                entry["value"] = body.get("value")
-                entry["updated_by"] = body.get("agent_id")
-                entry["updated_at"] = utcnow()
-                entry["history"].append({"value": body.get("value"),
-                                        "by": body.get("agent_id"),
-                                        "at": utcnow()})
-                entry["history"] = entry["history"][-20:]
-                ns[key] = entry
-                save_state()
-            emit("context_updated", {"goal_id": gid, "key": key, "kind": "value",
-                                    "by": body.get("agent_id")})
-            return self._send(200, {"ok": True, "entry": entry})
-
-        if len(parts) == 5 and parts[0] == "api" and parts[1] == "goals" \
-                and parts[3] == "context" and parts[4] == "append":
-            gid = parts[2]
-            key = body.get("key")
-            if not key:
-                return self._send(400, {"error": "key required"})
-            with lock:
-                ns = state["context"].setdefault(gid, {})
-                entry = ns.get(key)
-                if not entry or entry.get("kind") != "log":
-                    entry = {"kind": "log", "log": []}
-                entry["log"].append({"entry": body.get("entry"),
-                                     "by": body.get("agent_id"),
-                                     "at": utcnow()})
-                entry["log"] = entry["log"][-100:]
-                ns[key] = entry
-                save_state()
-            emit("context_updated", {"goal_id": gid, "key": key, "kind": "log",
-                                    "by": body.get("agent_id")})
-            return self._send(200, {"ok": True, "entry": entry})
-
-        if parts == ["a2a"]:
-            return self._handle_a2a(body)
-
-        if parts[:2] == ["api", "games"]:
-            return self._route_games_post(parts[2:], body)
-
-        self._send(404, {"error": "not found"})
 
     # ---------- mini-games ----------
     # Credit-staked games agents play in playground mode (see issue #30).

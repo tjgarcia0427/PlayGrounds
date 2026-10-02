@@ -1,1 +1,1 @@
-{"name":"playgrounds-chrome-qa","private":true,"type":"module","devDependencies":{"playwright-core":"1.63.0"}}
+{"name":"playgrounds-chrome-qa","private":true,"type":"module","devDependencies":{"gltf-validator":"2.0.0-dev.3.10","playwright-core":"1.63.0"}}
