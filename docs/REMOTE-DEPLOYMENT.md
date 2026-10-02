@@ -112,6 +112,72 @@ loopback behavior when unset). **Implemented** in `mvp/server.py`:
    (Caddy: `log { format json }` without `request>uri` query, or a
    `handle` that drops it.)
 
+## Operations: health, backups, log hygiene (issue #33)
+
+### Health endpoint
+
+`GET /api/health` is operator-gated (header only, like every lobby API)
+and returns liveness plus integrity, never sensitive data:
+
+```json
+{"status": "ok", "ledger_ok": true, "ledger_failing_seq": null,
+ "ledger_entries": 128, "state_size_bytes": 40211,
+ "state_age_seconds": 3.1, "room_count": 2}
+```
+
+HTTP 200 when the ledger hash chain verifies, **503** when it does not
+(`status: "degraded"`, `ledger_failing_seq` names the first bad entry) so
+a monitor can alert instead of silently serving corrupt history. A 503
+is not a restart problem — the on-disk history failed verification;
+restore from a snapshot (below).
+
+### State backups and restore
+
+Snapshots are timestamped copies next to the state file
+(`state.json.bak-YYYYmmddTHHMMSSffffffZ`, UTC). Rotation keeps the
+newest `PLAYGROUNDS_BACKUP_KEEP` (default 10). Tooling is
+`mvp/state_backup.py` — deliberately standalone, so it works even if
+the server itself is broken:
+
+- The server snapshots at **every startup** (a failed snapshot logs one
+  line and never blocks startup).
+- On demand / on a timer:
+  `python3 mvp/state_backup.py snapshot --state /var/lib/playgrounds/state.json`
+  A daily systemd timer is enough for the pilot:
+  a oneshot `playgrounds-backup.service` running that command, plus a
+  `playgrounds-backup.timer` with `OnCalendar=daily`, `Persistent=true`.
+- Restore (server stopped):
+  ```
+  systemctl stop playgrounds
+  python3 mvp/state_backup.py restore /var/lib/playgrounds/state.json.bak-<stamp>
+  systemctl start playgrounds
+  ```
+  Restore first preserves the current file at `state.json.pre-restore`,
+  then swaps the snapshot in atomically.
+- Verify after restore: `GET /api/health` must show `ledger_ok: true`;
+  if you recorded a `GET /api/ledger` digest beforehand, it must match
+  exactly. The full cycle (activity → snapshot → wipe → restore →
+  digest + room auth verified) is exercised by `mvp/test_ops.py` Part D.
+
+### Log hygiene — what the deployer must redact
+
+- The server itself logs **nothing per request** (`log_message` is
+  disabled); stdout carries only the startup banner and the snapshot
+  line — no credentials, by design and by test (`test_ops.py` Part E
+  scans real server logs for credential patterns).
+- The reverse proxy is the leak risk, not the app: default access logs
+  record full request URIs, and the legacy SSE path puts a Bearer token
+  in the query string (`?token=`). **Disable proxy access logging or
+  strip query strings** (Phase-2 item 7; the `deploy/` Caddy template
+  ships with no access log). If you must keep access logs, redact
+  `?token=` values before shipping them anywhere.
+- Never log `Authorization` headers at any layer (proxy, tunnel,
+  journald captures). The operator token, invite tokens and member
+  Bearer tokens are passwords; a log that contains one is a credential
+  leak — rotate the affected credential, don't just delete the log.
+- MCP client logs: the connector redacts token values from results and
+  errors (#52); keep client stderr out of shared log aggregation anyway.
+
 ## What does NOT change
 
 - Room auth, invite lifecycle, caller binding, escrow, ledger isolation —

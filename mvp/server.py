@@ -38,6 +38,9 @@ API (v0.1 preserved, v0.2 additive):
   POST /api/goals/{gid}/context         {key, value?, agent_id} / append {key, entry, agent_id}
   GET  /api/goals/{gid}/context
   GET  /api/state                       full state snapshot
+  GET  /api/health                      ops health (operator-gated): liveness,
+                                        ledger verification, state age/size,
+                                        room count; no sensitive data
   GET  /api/events?since=N              server-sent events (live stream)
   GET  /.well-known/agent-card.json     playground Agent Card (A2A discovery)
   POST /a2a                             minimal A2A JSON-RPC: card/get, task/send, task/get, task/cancel
@@ -626,6 +629,29 @@ def verify_ledger_chain():
         if i > 0 and e.get("prev") != state["ledger"][i - 1].get("checksum"):
             return False, e["seq"]
     return ok, failing
+
+
+def health_report():
+    """Operator-gated health payload (issue #33): liveness, the ledger-chain
+    verification result, state-file age/size and the room count. Nothing
+    sensitive: no salt, no token material, no member data. The caller holds
+    `lock` (the chain walk reads the live ledger)."""
+    ok, failing = verify_ledger_chain()
+    try:
+        st = os.stat(STATE_PATH)
+        size = st.st_size
+        age = max(0.0, time.time() - st.st_mtime)
+    except OSError:
+        size, age = 0, None
+    return {
+        "status": "ok" if ok else "degraded",
+        "ledger_ok": ok,
+        "ledger_failing_seq": failing,
+        "ledger_entries": len(state["ledger"]),
+        "state_size_bytes": size,
+        "state_age_seconds": None if age is None else round(age, 1),
+        "room_count": len(state.get("rooms", {})),
+    }
 
 
 # Run the v0.1 -> v0.2 migration now that save_state/ledger_append exist.
@@ -1735,6 +1761,13 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/assets/workboard.css":
                 with open(os.path.join(ROOT, "assets", "workboard.css"), "rb") as f:
                     self._send(200, f.read(), "text/css; charset=utf-8")
+            elif parsed.path == "/api/health":
+                # Operator-gated (do_GET gate above): liveness + ledger
+                # verification + state-file stats, no sensitive data.
+                # 503 when the chain fails so monitors can alert.
+                with lock:
+                    report = health_report()
+                self._send(200 if report["ledger_ok"] else 503, report)
             elif parsed.path == "/api/state":
                 with lock:
                     # Explicit public-state allowlist (plus sanitized games);
@@ -3178,6 +3211,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Ops (issue #33): snapshot state.json before serving so every start
+    # leaves a restorable copy; rotation keeps the newest
+    # PLAYGROUNDS_BACKUP_KEEP (default 10). A backup failure must never
+    # block startup.
+    try:
+        import state_backup
+        snap = state_backup.make_snapshot(STATE_PATH)
+        if snap:
+            print(f"state snapshot: {snap}", flush=True)
+    except Exception as e:
+        print(f"state snapshot failed: {e}", flush=True)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Playgrounds protocol server v0.2 on http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
