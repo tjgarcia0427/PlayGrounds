@@ -111,7 +111,7 @@ try{
  document.querySelector('#turn').oninput=()=>dirty=true;
  document.querySelector('#quality').onchange=e=>{const n=Number(e.target.value);geometry.instanceCount=n;uniforms.layers.value=n;dirty=true;};
  for(const b of document.querySelectorAll('[data-palette]'))b.onclick=()=>{for(const p of document.querySelectorAll('[data-palette]'))p.setAttribute('aria-pressed',String(p===b));const colors=palettes[b.dataset.palette];uniforms.rootColor.value.set(colors[0]);uniforms.tipColor.value.set(colors[1]);dirty=true;};
- function resize(){dirty=true;const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,4.9/camera.aspect+.8));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
+ function resize(){dirty=true;const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,5.5/camera.aspect+1.));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
  renderer.setAnimationLoop(now=>{
   const dt=Math.min((now-previous)/1000,.033);previous=now;
   if(still&&!dirty)return;dirty=false;
