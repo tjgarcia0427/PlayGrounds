@@ -121,15 +121,18 @@ and returns liveness plus integrity, never sensitive data:
 
 ```json
 {"status": "ok", "ledger_ok": true, "ledger_failing_seq": null,
- "ledger_entries": 128, "state_size_bytes": 40211,
- "state_age_seconds": 3.1, "room_count": 2}
+ "ledger_entries": 128, "room_ledgers_ok": true,
+ "state_size_bytes": 40211, "state_age_seconds": 3.1, "room_count": 2}
 ```
 
-HTTP 200 when the ledger hash chain verifies, **503** when it does not
-(`status: "degraded"`, `ledger_failing_seq` names the first bad entry) so
-a monitor can alert instead of silently serving corrupt history. A 503
-is not a restart problem — the on-disk history failed verification;
-restore from a snapshot (below).
+Verification covers **every** ledger: the lobby chain (`ledger_ok`,
+`ledger_failing_seq` names its first bad entry) and each room's own
+chain (`room_ledgers_ok`, a bare boolean — no room or member data).
+HTTP 200 only when all of them verify; **503** otherwise
+(`status: "degraded"`) so a monitor can alert instead of silently
+serving corrupt history. A 503 is not a restart problem — the history
+the server holds in memory (loaded from the state file at boot) failed
+verification; restore from a snapshot (below).
 
 ### State backups and restore
 
@@ -146,15 +149,31 @@ the server itself is broken:
   A daily systemd timer is enough for the pilot:
   a oneshot `playgrounds-backup.service` running that command, plus a
   `playgrounds-backup.timer` with `OnCalendar=daily`, `Persistent=true`.
-- Restore (server stopped):
+- Restore (server stopped) — run it **as the service account** and
+  **always name the live state file with `--state`**. The CLI cannot
+  see the systemd unit's EnvironmentFile: without `--state` (and
+  without `PLAYGROUNDS_STATE_PATH` in *your* shell) it defaults to
+  `mvp/state.json` in the checkout, and you would "restore" a file the
+  service never reads while it keeps running on the untouched live
+  state:
   ```
   systemctl stop playgrounds
-  python3 mvp/state_backup.py restore /var/lib/playgrounds/state.json.bak-<stamp>
+  sudo -u playgrounds python3 mvp/state_backup.py restore \
+      /var/lib/playgrounds/state.json.bak-<stamp> \
+      --state /var/lib/playgrounds/state.json
   systemctl start playgrounds
   ```
+  Running as the service account also keeps the restored file owned by
+  that account; if you restore as root instead, `chown playgrounds`
+  the state file afterwards or the service cannot write it. (If the
+  snapshot path is elsewhere, snapshots are written next to whatever
+  `--state` names — list them with
+  `python3 mvp/state_backup.py list --state /var/lib/playgrounds/state.json`.)
   Restore first preserves the current file at `state.json.pre-restore`,
-  then swaps the snapshot in atomically.
-- Verify after restore: `GET /api/health` must show `ledger_ok: true`;
+  then swaps the snapshot in atomically. Snapshots, the safety copy
+  and the restored state are all created owner-only (0600).
+- Verify after restore: `GET /api/health` must show `ledger_ok: true`
+  and `room_ledgers_ok: true`;
   if you recorded a `GET /api/ledger` digest beforehand, it must match
   exactly. The full cycle (activity → snapshot → wipe → restore →
   digest + room auth verified) is exercised by `mvp/test_ops.py` Part D.

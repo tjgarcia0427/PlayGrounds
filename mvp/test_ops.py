@@ -2,15 +2,20 @@
 """Ops hardening suite (issue #33).
 
 Part A — unit: health_report() payload shape, sensitivity and tamper
-detection, against an isolated temp state (in-process).
+detection (lobby chain AND a private room's chain), against an
+isolated temp state (in-process).
 Part B — integration: boot a real server on 127.0.0.1:8485 with an
 operator token; /api/health is operator-gated (header only, never the
 query string) and reports a live, verifying ledger.
 Part C — backup rotation: timestamped snapshots, keep-N pruning,
-restore with a pre-restore safety copy (pure state_backup functions).
+restore with a pre-restore safety copy (pure state_backup functions);
+owner-only (0600) copies under an ordinary umask; nonpositive keep
+rejected via API and CLI; CLI restore to an explicit nondefault
+--state (the runbook regression).
 Part D — isolated restore demonstration: real room activity on
 127.0.0.1:8486 -> snapshot -> wipe state.json -> restore -> reboot;
-the ledger digest and room auth must survive the round trip.
+the lobby ledger digest, the private-room ledger digest and room
+auth must survive the round trip.
 Part E — log hygiene: everything the Part B/D servers printed is
 scanned for the synthetic credentials used and for credential
 patterns; plus a static scan that no print call in server.py or
@@ -21,6 +26,7 @@ Usage: python3 test_ops.py
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -115,9 +121,11 @@ class TestAHealthUnit(unittest.TestCase):
             report = srv.health_report()
         self.assertEqual(set(report), {
             "status", "ledger_ok", "ledger_failing_seq", "ledger_entries",
-            "state_size_bytes", "state_age_seconds", "room_count"})
+            "room_ledgers_ok", "state_size_bytes", "state_age_seconds",
+            "room_count"})
         self.assertEqual(report["status"], "ok")
         self.assertTrue(report["ledger_ok"])
+        self.assertTrue(report["room_ledgers_ok"])
         self.assertIsNone(report["ledger_failing_seq"])
         self.assertGreaterEqual(report["ledger_entries"], 1)
         self.assertGreater(report["state_size_bytes"], 0)
@@ -141,6 +149,27 @@ class TestAHealthUnit(unittest.TestCase):
         self.assertFalse(report["ledger_ok"])
         self.assertEqual(report["status"], "degraded")
         self.assertEqual(report["ledger_failing_seq"], entry["seq"])
+
+    def test_health_report_detects_tampered_room_ledger(self):
+        # A private room's chain is verified too: copy the VISIONQUEST
+        # probe — a room with a valid ledger whose final entry's data
+        # is tampered must degrade health even though the lobby is fine.
+        room = srv.blank_room("Vault")
+        srv.state["rooms"][room["id"]] = room
+        with srv.room_scope(room):
+            srv.ledger_append("room_probe", {"n": 1}, actor="test")
+            srv.ledger_append("room_probe", {"n": 2}, actor="test")
+        room["ledger"][-1]["data"] = {"n": 999}  # tamper, no re-save
+        with srv.lock:
+            report = srv.health_report()
+        self.assertTrue(report["ledger_ok"])  # lobby chain itself intact
+        self.assertFalse(report["room_ledgers_ok"])
+        self.assertEqual(report["status"], "degraded")
+        self.assertEqual(report["room_count"], 1)
+        # and the payload still leaks nothing about the room
+        blob = json.dumps(report)
+        self.assertNotIn(room["id"], blob)
+        self.assertNotIn("Vault", blob)
 
 
 # ------------------------------------------------------------------ Part B
@@ -173,6 +202,7 @@ class TestBHealthHttp(unittest.TestCase):
         self.assertEqual(code, 200, body)
         self.assertEqual(body["status"], "ok")
         self.assertTrue(body["ledger_ok"])
+        self.assertTrue(body["room_ledgers_ok"])
         self.assertEqual(body["room_count"], 1)
         self.assertGreater(body["state_size_bytes"], 0)
         self.assertGreaterEqual(body["state_age_seconds"], 0)
@@ -216,6 +246,72 @@ class TestCBackupRotation(unittest.TestCase):
             self.assertEqual(json.load(f), {"v": 1})
         with open(self.state + ".pre-restore") as f:
             self.assertEqual(json.load(f), {"v": 2})
+
+    def test_copies_are_owner_only_under_umask_022(self):
+        # Review probe: a 0600 source under an ordinary umask 022 must
+        # not come back 0644 through any snapshot/restore copy.
+        def mode(p):
+            return stat.S_IMODE(os.stat(p).st_mode)
+
+        old_umask = os.umask(0o022)
+        try:
+            os.chmod(self.state, 0o600)
+            snap = state_backup.make_snapshot(self.state)
+            self.assertEqual(mode(snap), 0o600)
+            with open(self.state, "w") as f:
+                json.dump({"v": 2}, f)
+            os.chmod(self.state, 0o600)
+            state_backup.restore_snapshot(snap, self.state)
+            self.assertEqual(mode(self.state), 0o600)
+            self.assertEqual(mode(self.state + ".pre-restore"), 0o600)
+        finally:
+            os.umask(old_umask)
+
+    def test_nonpositive_keep_rejected_and_snapshots_survive(self):
+        snap = state_backup.make_snapshot(self.state, keep=3)
+        self.assertTrue(os.path.exists(snap))
+        for bad in (0, -1, -100):
+            with self.assertRaises(ValueError):
+                state_backup.make_snapshot(self.state, keep=bad)
+            with self.assertRaises(ValueError):
+                state_backup.prune_snapshots(self.state, keep=bad)
+        # every rejected call left the existing snapshot untouched
+        self.assertEqual(state_backup.list_snapshots(self.state), [snap])
+
+    def _run_cli(self, *argv):
+        return subprocess.run(
+            [sys.executable, os.path.join(HERE, "state_backup.py"), *argv],
+            capture_output=True, text=True, timeout=30)
+
+    def test_cli_rejects_nonpositive_keep(self):
+        snap = state_backup.make_snapshot(self.state)
+        r = self._run_cli("snapshot", "--state", self.state, "--keep", "0")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("keep", r.stderr)
+        self.assertEqual(state_backup.list_snapshots(self.state), [snap])
+
+    def test_cli_snapshot_and_restore_use_explicit_state(self):
+        # Runbook regression (finding 1): the deployed state file lives
+        # at a nondefault path and the shell cannot see the systemd
+        # EnvironmentFile — snapshot and restore must honor --state.
+        deployed = os.path.join(self.dir, "varlib", "state.json")
+        os.makedirs(os.path.dirname(deployed))
+        with open(deployed, "w") as f:
+            json.dump({"v": "deployed-1"}, f)
+        r = self._run_cli("snapshot", "--state", deployed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        snaps = state_backup.list_snapshots(deployed)
+        self.assertEqual(len(snaps), 1)
+        with open(deployed, "w") as f:
+            json.dump({"v": "deployed-2"}, f)
+        r = self._run_cli("restore", snaps[0], "--state", deployed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(deployed) as f:
+            self.assertEqual(json.load(f), {"v": "deployed-1"})
+        with open(deployed + ".pre-restore") as f:
+            self.assertEqual(json.load(f), {"v": "deployed-2"})
+        # nothing leaked into this test's own state rotation set
+        self.assertEqual(state_backup.list_snapshots(self.state), [])
 
 
 # ------------------------------------------------------------------ Part D
@@ -282,10 +378,55 @@ class TestDRestoreDemo(unittest.TestCase):
             self.assertEqual(code, 200, joined)
             member_tok = joined["token"]
             SECRETS_USED.extend([owner_tok, inv["token"], member_tok])
+            owner_aid = out["agent"]["id"]
+            member_aid = joined["agent"]["id"]
+
+            # A full task lifecycle INSIDE the room, so the private
+            # room ledger carries substantive history (goal/task/
+            # claim/complete/verify), not just room_created.
+            code, rgoal = server.req("POST", f"/api/rooms/{rid}/goals",
+                                     {"title": "Room restore demo",
+                                      "budget": 50}, token=owner_tok)
+            self.assertEqual(code, 200, rgoal)
+            code, rtask = server.req(
+                "POST", f"/api/rooms/{rid}/goals/{rgoal['id']}/tasks",
+                {"title": "Survive a restore (room)", "bounty": 10},
+                token=owner_tok)
+            self.assertEqual(code, 200, rtask)
+            rtid = rtask["id"]
+            code, _ = server.req("POST", f"/api/rooms/{rid}/tasks/{rtid}/claim",
+                                 {"agent_id": member_aid}, token=member_tok)
+            self.assertEqual(code, 200)
+            code, _ = server.req(
+                "POST", f"/api/rooms/{rid}/tasks/{rtid}/complete",
+                {"agent_id": member_aid, "result": "done"}, token=member_tok)
+            self.assertEqual(code, 200)
+            code, rver = server.req(
+                "POST", f"/api/rooms/{rid}/tasks/{rtid}/verify",
+                {"approved": True, "verifier_agent_id": owner_aid,
+                 "quality": 0.9, "confidence": 0.9}, token=owner_tok)
+            self.assertEqual(code, 200, rver)
+            self.assertEqual(rver["task"]["status"], "done")
+
+            # Record the private-room ledger digest pre-wipe: it must
+            # be a real, non-empty chain.
+            code, room_ledger = server.req("GET", f"/api/rooms/{rid}/ledger",
+                                           token=owner_tok)
+            self.assertEqual(code, 200, room_ledger)
+            room_digest_before = room_ledger["digest"]
+            self.assertGreater(room_ledger["ledger_seq"], 2)
+            self.assertNotEqual(
+                room_digest_before,
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            print(f"[restore-demo] pre-wipe room ledger_seq="
+                  f"{room_ledger['ledger_seq']}")
+            print(f"[restore-demo] pre-wipe room ledger digest: "
+                  f"{room_digest_before}")
 
             code, health = server.req("GET", "/api/health", token=OP_TOKEN)
             self.assertEqual(code, 200, health)
             self.assertTrue(health["ledger_ok"])
+            self.assertTrue(health["room_ledgers_ok"])
             self.assertEqual(health["room_count"], 1)
             code, ledger = server.req("GET", "/api/ledger", token=OP_TOKEN)
             self.assertEqual(code, 200, ledger)
@@ -319,10 +460,19 @@ class TestDRestoreDemo(unittest.TestCase):
             code, health = server2.req("GET", "/api/health", token=OP_TOKEN)
             self.assertEqual(code, 200, health)
             self.assertTrue(health["ledger_ok"], health)
+            self.assertTrue(health["room_ledgers_ok"], health)
             self.assertEqual(health["room_count"], 1)
             code, ledger = server2.req("GET", "/api/ledger", token=OP_TOKEN)
             self.assertEqual(code, 200, ledger)
             self.assertEqual(ledger["digest"], digest_before)
+            # the private-room ledger survived the round trip too
+            code, room_ledger = server2.req("GET", f"/api/rooms/{rid}/ledger",
+                                            token=owner_tok)
+            self.assertEqual(code, 200, room_ledger)
+            self.assertEqual(room_ledger["digest"], room_digest_before)
+            print(f"[restore-demo] post-restore room ledger digest: "
+                  f"{room_ledger['digest']} "
+                  f"(match: {room_ledger['digest'] == room_digest_before})")
             code, room_state = server2.req("GET", f"/api/rooms/{rid}/state",
                                            token=member_tok)
             self.assertEqual(code, 200, room_state)
