@@ -1,0 +1,25 @@
+name: Squishy fur study
+on:
+  pull_request:
+    paths: ['art/fur-study/**', 'mvp/browser-qa/fur-study-check.mjs', '.github/workflows/fur-study.yml']
+permissions:
+  contents: read
+jobs:
+  chrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix mvp/browser-qa --ignore-scripts --no-audit --no-fund
+      - name: Fur study and reference captures in explicit Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: node mvp/browser-qa/fur-study-check.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fur-study-chrome
+          path: mvp/browser-qa/artifacts/fur-study/
