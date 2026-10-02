@@ -111,7 +111,7 @@ try{
  document.querySelector('#turn').oninput=()=>dirty=true;
  document.querySelector('#quality').onchange=e=>{const n=Number(e.target.value);geometry.instanceCount=n;uniforms.layers.value=n;dirty=true;};
  for(const b of document.querySelectorAll('[data-palette]'))b.onclick=()=>{for(const p of document.querySelectorAll('[data-palette]'))p.setAttribute('aria-pressed',String(p===b));const colors=palettes[b.dataset.palette];uniforms.rootColor.value.set(colors[0]);uniforms.tipColor.value.set(colors[1]);dirty=true;};
- function resize(){dirty=true;const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,3.85/camera.aspect));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
+ function resize(){dirty=true;const box=canvas.parentElement.getBoundingClientRect();renderer.setSize(box.width,box.height,false);camera.aspect=box.width/box.height;camera.position.set(0,.18,Math.max(5.4,4.9/camera.aspect+.8));camera.lookAt(0,-.03,0);camera.updateProjectionMatrix();}new ResizeObserver(resize).observe(canvas.parentElement);resize();
  renderer.setAnimationLoop(now=>{
   const dt=Math.min((now-previous)/1000,.033);previous=now;
   if(still&&!dirty)return;dirty=false;
@@ -122,6 +122,8 @@ try{
   // Face follows exactly the same global deformation as fur.
   const sy=1-c,sx=1/Math.sqrt(sy);face.scale.set(sx,sy,sx);face.position.y=-c*.87;
   renderer.render(scene,camera);frames++;
-  window.furStudy={ready:true,frames,compression:c,time:elapsed,still,shells:geometry.instanceCount,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles};
+  const left=new THREE.Vector3(-1.4,0,.96).project(camera).x;
+  const right=new THREE.Vector3(1.4,0,.96).project(camera).x;
+  window.furStudy={ready:true,viewportWidth:canvas.clientWidth,framing:[left,right],frames,compression:c,time:elapsed,still,shells:geometry.instanceCount,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles};
  });
 }catch(error){fallback.hidden=false;canvas.hidden=true;document.querySelector('#squish').disabled=true;window.furStudy={ready:false,fallback:true};console.warn('WebGL unavailable');}

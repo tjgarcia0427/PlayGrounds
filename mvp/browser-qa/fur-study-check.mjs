@@ -12,15 +12,7 @@ try{
  browser=await chromium.launch({executablePath:chrome,headless:true,chromiumSandbox:true});
  const page=await browser.newPage({viewport:{width:850,height:850}});page.setDefaultTimeout(60000);
  // External reference capture only; never use its assets in the prototype.
- console.log('Reference capture starting');
- const ref=await browser.newPage({viewport:{width:850,height:850}});
- try{
-  await ref.goto('https://three-fur-test.vercel.app/',{waitUntil:'networkidle',timeout:45000});
-  await ref.locator('#picker button').first().waitFor();
-  await ref.screenshot({path:output+'/reference-default.png'});
-  await ref.getByRole('button',{name:'Iggy',exact:true}).click();
-  await ref.screenshot({path:output+'/reference-iggy.png'});
- }catch(e){writeFileSync(output+'/reference-error.txt',String(e)+'\n'+await ref.locator('body').innerText().catch(()=>''));await ref.screenshot({path:output+'/reference-unavailable.png',timeout:15000}).catch(()=>{});}finally{await ref.close();}
+  // External reference did not render on this runner in two attempts. See README.
  console.log('Prototype capture starting');
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.goto('http://127.0.0.1:8498/art/fur-study/');
@@ -44,6 +36,8 @@ try{
  await page.selectOption('#quality','32');await page.waitForFunction(()=>window.furStudy.shells===32);
  await page.screenshot({path:output+'/balanced.png'});
  await page.setViewportSize({width:390,height:844});await page.selectOption('#quality','16');await page.waitForFunction(()=>window.furStudy.shells===16);
+ await page.waitForFunction(()=>window.furStudy.viewportWidth===390);
+ const framing=await page.evaluate(()=>window.furStudy.framing);assert.ok(framing[0]>-.95&&framing[1]<.95,'Fur envelope fits mobile with margin');
  await page.screenshot({path:output+'/mobile.png'});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  writeFileSync(output+'/metrics.json',JSON.stringify(await page.evaluate(()=>window.furStudy),null,2));

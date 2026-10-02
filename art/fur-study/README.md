@@ -19,3 +19,7 @@ Portrait/balanced/light: 64/32/16 instanced layers. One-character study only;
 24-agent crowd, skinned rig, scene lighting integration, real-device performance,
 fur/eye intersections at every angle and final visual match remain unaccepted.
 Chrome CI is software-rendered evidence, not a real-device performance benchmark.
+
+Reference visual capture could not be completed on the CI Chrome runner (the
+reference picker never appeared). Public HTML/JS was inspectable by HTTP, but
+an exact visual match is NOT established. No copied reference source is shipped.
