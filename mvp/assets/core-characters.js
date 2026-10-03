@@ -117,17 +117,6 @@ export function createCoreCharacter(seed=0){
    ball([sign*(width+.14),y+.07,.32],[.045,.065,.025],'#eee8ff');
   }
  }
- function earbuds(width=.84,color='#fff6df'){
-  for(const sign of[-1,1]){
-   ball([sign*width,.08,.57],[.11,.13,.10],color);
-   ball([sign*width,-.08,.63],[.046,.16,.046],color);
-   tube([[sign*width,-.18,.64],[sign*.78,-.46,.80],[sign*.40,-.66,.96],[.06,-.75,.96]],.014,color);
-  }
-  tube([[.06,-.75,.96],[.1,-.94,.89],[.4,-.92,.88],[.43,-.67,.99]],.014,color);
-  ball([.43,-.65,.97],[.14,.20,.045],'#6c657d');
-  ball([.43,-.62,1.015],[.094,.10,.012],'#bce0d0');
-  ball([.43,-.78,1.015],[.03,.03,.012],'#fdf4e9');
- }
  function glasses(color='#b58c51',radius=.20){
   for(const x of[-.27,.27])ring([x,.12,.997],radius,.018,color);
   tube([[-.07,.13,.997],[0,.18,1.005],[.07,.13,.997]],.016,color);
