@@ -44,6 +44,7 @@ function buildCampus() {
   sun.shadow.normalBias=.06;scene.add(sun);
   const rim=new THREE.DirectionalLight('#d1d9ff',1.1);rim.position.set(15,10,-12);scene.add(rim);
   const route=createNavigator(),director=new InteractionDirector(route),art=createArtKit();
+  let stillRenderKey='';
   let portrait=false;const portraitButton=document.getElementById('portraitView');
   const materials=new Map();
   function mat(color) {
@@ -405,6 +406,7 @@ function buildCampus() {
       const pose=interaction?.pose||(walking?(a.exitPose||'walk'):ambientPose(a.space,activity,director.clock,a.seed));
       a.pose=stale?'idle':pose;
       a.animation.update(stale?'idle':pose,dt,!ambientMotion||stale);
+      a.updateFur(dt,{still:!ambientMotion||stale,pose:a.pose,detail:detail&&a===followed,mobile:host.clientWidth<600});
       for(const eye of a.eyes)eye.scale.y=blinkAmount(director.clock,a.seed,ambientMotion&&!stale);
       a.mug.visible=!!interaction?.mug;
       a.root.scale.setScalar(stale?.88:1);
@@ -418,11 +420,16 @@ function buildCampus() {
     host.dataset.completed=JSON.stringify(director.completed);
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
     host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);
-    renderer.render(scene,camera);
+    // A still scene must also yield GPU time to UI controls. Repaint on view,
+    // roster or pose changes; live motion always renders normally.
+    const stillKey=JSON.stringify([room,detail,follow.value,orbit,zoom,host.clientWidth,host.clientHeight,
+      [...actors.values()].map(a=>[a.agent.id,a.agent.name,a.stamp,a.pose,a.root.position.toArray()])]);
+    if(ambientMotion||stillKey!==stillRenderKey)renderer.render(scene,camera);
+    stillRenderKey=ambientMotion?'':stillKey;
     document.getElementById('portraitNote').hidden=!detail;
-    host.dataset.artDirection='plush-pack-2026-09-30';host.dataset.portrait=String(!!detail);
+    host.dataset.artDirection='core-four-fur-2026-10-03';host.dataset.portrait=String(!!detail);
     host.dataset.artMetrics=JSON.stringify({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});
-    host.dataset.characterStyles=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,style:a.root.userData.artStyle})));
+    host.dataset.characterStyles=JSON.stringify([...actors.values()].map(a=>({id:a.agent.id,style:a.root.userData.artStyle,species:a.root.userData.species,layers:a.root.userData.furLayers,compression:a.root.userData.compression,furTime:a.root.userData.furTime})));
   }
   if(globalThis.playgroundsWorldSnapshot)sync(globalThis.playgroundsWorldSnapshot.world);
   host.hidden=false;mode.disabled=false;setView();resize();requestAnimationFrame(frame);

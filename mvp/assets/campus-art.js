@@ -1,14 +1,8 @@
 // Original procedural art. References set mood/proportion; no reference pixels ship.
 import * as THREE from './vendor/three.module.js';
 import {RoundedBoxGeometry} from './vendor/RoundedBoxGeometry.js';
-export const PLUSH_STYLES=Object.freeze([
-  {name:'peach fox',color:'#efa77c',type:'fox'},
-  {name:'lilac owl',color:'#b7a1d8',type:'owl'},
-  {name:'mint bunny',color:'#a4c7b1',type:'bunny'},
-  {name:'sky bear',color:'#a5c9db',type:'bear'},
-  {name:'buttercup bear',color:'#e4c780',type:'bear'},
-  {name:'rose fox',color:'#dba7bc',type:'fox'}
-]);
+import {CORE_STYLES,createCoreCharacter} from './core-characters.js';
+export const PLUSH_STYLES=CORE_STYLES;
 export function plushStyle(seed){return PLUSH_STYLES[(seed>>>0)%PLUSH_STYLES.length];}
 export function createArtKit(){
   const sphere=new THREE.SphereGeometry(1,20,16),cylinder=new THREE.CylinderGeometry(1,1,1,20);
@@ -23,40 +17,6 @@ export function createArtKit(){
   function mesh(geo,material,pos,scale,parent){const o=new THREE.Mesh(geo,material);o.position.set(...pos);o.scale.set(...scale);o.castShadow=Math.max(...scale)>.25;o.receiveShadow=true;parent.add(o);return o;}
   const ball=(material,pos,scale,parent)=>mesh(sphere,material,pos,scale,parent);
   const box=(material,pos,scale,parent)=>mesh(rounded,material,pos,scale,parent);
-  function plush(seed){
-    const style=plushStyle(seed),skin=cloth(style.color),cream=cloth('#f3e6cf'),pink=matte('#e7aaa7');
-    const root=new THREE.Group(),body=new THREE.Group(),head=new THREE.Group();body.name='Body';head.name='Head';root.add(body);body.add(head);
-    ball(skin,[0,.62,0],[.36,.46,.29],body);
-    ball(cream,[0,.59,.235],[.255,.32,.095],body);
-    ball(skin,[0,1.21,0],[.47,.43,.37],head);
-    if(style.type==='fox'){
-      for(const side of [-1,1]){const ear=ball(skin,[side*.31,1.61,0],[.17,.25,.13],head);ear.rotation.z=-side*.27;ball(cream,[side*.32,1.64,.085],[.095,.16,.07],head);ball(cream,[side*.19,1.08,.3],[.245,.18,.095],head);}
-      const tail=ball(skin,[.2,.52,-.26],[.19,.27,.29],body);tail.rotation.z=-.5;
-      ball(cream,[.32,.63,-.43],[.12,.16,.13],body);
-    }else if(style.type==='owl'){
-      for(const side of [-1,1]){const tuft=ball(skin,[side*.34,1.56,-.01],[.11,.2,.1],head);tuft.rotation.z=-side*.45;ball(cream,[side*.18,1.22,.31],[.22,.24,.08],head);}
-    }else for(const side of [-1,1]){
-      const tall=style.type==='bunny';ball(skin,[side*.29,tall?1.67:1.55,0],[.14,tall?.32:.15,.12],head);ball(pink,[side*.29,tall?1.69:1.57,.08],[.078,tall?.21:.075,.045],head);
-    }
-    const eyes=[],eyeMat=new THREE.MeshPhysicalMaterial({color:'#252331',roughness:.15,clearcoat:1,clearcoatRoughness:.08});
-    for(const side of [-1,1]){
-      const eye=new THREE.Group();eye.position.set(side*.17,1.23,.375);head.add(eye);eyes.push(eye);
-      ball(eyeMat,[0,0,0],[.063,.077,.035],eye);ball(matte('#fff9e9'),[-.018,.025,.027],[.018,.022,.008],eye);ball(matte('#fff9e9'),[.019,-.025,.03],[.007,.009,.004],eye);
-      ball(pink,[side*.29,1.08,.319],[.08,.043,.023],head);
-    }
-    ball(matte(style.type==='owl'?'#cf9861':'#8d655f'),[0,1.115,.399],[.045,style.type==='owl'?.06:.027,.032],head);
-    const smile=new THREE.Mesh(new THREE.TorusGeometry(.064,.009,5,12,Math.PI),matte('#86685f'));smile.rotation.z=Math.PI;smile.position.set(0,1.08,.4);head.add(smile);
-    const arms=[-1,1].map((side,i)=>{const p=new THREE.Group();p.name=i?'RightArm':'LeftArm';p.position.set(side*.39,.85,0);body.add(p);ball(skin,[0,-.19,0],[.14,.27,.15],p);ball(cream,[0,-.36,.065],[.10,.095,.095],p);return p;});
-    const feet=[-1,1].map((side,i)=>{const p=ball(skin,[side*.2,.15,.08],[.18,.16,.23],root);p.name=i?'RightFoot':'LeftFoot';return p;});
-    // Headphone shape and all animation node names/pivots preserve the rig contract.
-    for(const side of [-1,1]){ball(matte('#e7d7cc'),[side*.47,1.21,0],[.115,.205,.21],head);ball(matte('#bdaacf'),[side*.54,1.21,0],[.065,.15,.16],head);}
-    const band=new THREE.Mesh(new THREE.TorusGeometry(.485,.044,8,24,Math.PI),matte('#c4b0d4'));band.position.set(0,1.2,0);head.add(band);
-    const mug=new THREE.Group();mug.position.set(0,-.43,.05);arms[1].add(mug);
-    mesh(cylinder,matte('#f7ebd8'),[0,0,0],[.11,.18,.11],mug);mesh(cylinder,matte('#87664e'),[0,.093,0],[.085,.008,.085],mug);
-    const handle=new THREE.Mesh(new THREE.TorusGeometry(.075,.025,6,10),matte('#f7ebd8'));handle.position.set(.11,0,0);mug.add(handle);mug.visible=false;
-    head.position.y=.98;for(const child of head.children)child.position.y-=.98;
-    root.userData.artStyle=style.name;
-    return {root,body,head,eyes,arms,feet,mug,dispose(){root.traverse(o=>{if(o.isInstancedMesh)o.dispose();if(o.geometry&&!sharedGeometries.has(o.geometry))o.geometry.dispose();});eyeMat.dispose();}};
-  }
+  const plush=createCoreCharacter;
   return {plush,rounded,matte,cloth,ball,box,sharedGeometries};
 }

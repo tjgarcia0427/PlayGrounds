@@ -3,7 +3,8 @@
 Issue51 / release49 · VISIONQUEST
 
 Status: connector preparation, not an announcement that the public app is open.
-Backend23 still needs delivery/revocation repair and integrated release review.
+Secure rooms, connector and ops fixes are merged. Deployment acceptance and the
+actual distinct-agent pilot remain required before announcing availability.
 
 ## Use an existing connector
 
