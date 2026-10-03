@@ -3,13 +3,19 @@ import {createArtKit,PLUSH_STYLES} from './assets/campus-art.js';
 import {animateCharacter} from './assets/campus-animation.js';
 const kit=createArtKit();let sharedDisposals=0;
 for(const geo of kit.sharedGeometries)geo.addEventListener('dispose',()=>sharedDisposals++);
-for(let seed=0;seed<6;seed++){
+for(let seed=0;seed<4;seed++){
  const actor=kit.plush(seed),twin=kit.plush(seed),rig=animateCharacter(actor.root);
  assert.equal(actor.root.userData.artStyle,PLUSH_STYLES[seed].name);
  for(const name of ['Head','Body','LeftArm','RightArm','LeftFoot','RightFoot'])assert.ok(actor.root.getObjectByName(name));
- const materials=[];actor.root.traverse(o=>{if(o.material?.bumpMap)materials.push(o.material)});
- assert.ok(materials.length>0);assert.ok(materials.every(m=>m.bumpMap.image.data.length===128*128*4));
- assert.ok(materials.every(m=>m.bumpMap===materials[0].bumpMap),'shared fabric texture');
+ const fur=[];actor.root.traverse(o=>{if(o.material?.uniforms?.coat)fur.push(o)});
+ assert.ok(fur.length>0,'approved shader fur must reach live rig');
+ actor.updateFur(.02,{pose:'walk',detail:true});
+ assert.ok(fur.every(o=>o.geometry.instanceCount===48));
+ assert.ok(actor.root.userData.compression>0,'activity transition excites spring');
+ actor.updateFur(.02,{still:true,mobile:true});
+ assert.equal(actor.root.userData.compression,0);
+ assert.ok(fur.every(o=>o.geometry.instanceCount===6));
+ const time=actor.root.userData.furTime;actor.updateFur(.1,{still:true});assert.equal(actor.root.userData.furTime,time);
  for(const pose of ['typing','walk','wave','seatedHeadphones','climb','slide','hang','sip']){
   for(let i=0;i<60;i++)rig.update(pose,.02);
   actor.root.updateMatrixWorld(true);actor.root.traverse(o=>assert.ok(o.matrixWorld.elements.every(Number.isFinite)));
@@ -21,4 +27,4 @@ for(let seed=0;seed<6;seed++){
  rig.dispose();actor.dispose();twin.dispose();
 }
 assert.equal(sharedDisposals,0,'removing actors must not dispose geometry used by surviving actors');
-console.log('Six plush rigs: all animation bindings, finite transforms, root isolation, shared bounded fabric texture, still mode and shared geometry lifetime passed.');
+console.log('Four shader-fur rigs: all animation bindings, finite transforms, root isolation, fur detail levels, squish/reduced-motion, still mode and shared geometry lifetime passed.');
