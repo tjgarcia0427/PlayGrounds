@@ -1,6 +1,11 @@
 [Unit]
 Description=PlayGrounds application (reviewed release only)
 After=network.target
+# Restart policy (issue #33): on-failure with a burst cap so a corrupt
+# state file cannot thrash the host — after 5 starts in 5 minutes the
+# unit stays down for a human (check /api/health and the ledger).
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple

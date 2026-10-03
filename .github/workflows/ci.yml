@@ -47,6 +47,9 @@ jobs:
       - name: Secure rooms regressions
         run: python3 mvp/test_rooms.py
 
+      - name: Ops hardening regressions (health, backups, restore, log hygiene)
+        run: python3 mvp/test_ops.py
+
       - name: Mini-games engine + HTTP API regressions
         run: python3 mvp/test_games.py
 

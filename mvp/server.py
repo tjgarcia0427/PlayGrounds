@@ -38,6 +38,9 @@ API (v0.1 preserved, v0.2 additive):
   POST /api/goals/{gid}/context         {key, value?, agent_id} / append {key, entry, agent_id}
   GET  /api/goals/{gid}/context
   GET  /api/state                       full state snapshot
+  GET  /api/health                      ops health (operator-gated): liveness,
+                                        ledger verification, state age/size,
+                                        room count; no sensitive data
   GET  /api/events?since=N              server-sent events (live stream)
   GET  /.well-known/agent-card.json     playground Agent Card (A2A discovery)
   POST /a2a                             minimal A2A JSON-RPC: card/get, task/send, task/get, task/cancel
@@ -615,17 +618,56 @@ def ledger_digest():
     return "sha256:" + h.hexdigest()
 
 
-def verify_ledger_chain():
-    """Recompute the hash chain over the retained window. Returns
-    (ok, failing_seq_or_None). The oldest retained entry's `prev` is
-    trusted as the window root (older history may be truncated by LEDGER_CAP)."""
-    ok, failing = True, None
-    for i, e in enumerate(state["ledger"]):
+def verify_chain_entries(entries):
+    """Recompute the hash chain over one ledger's retained window.
+    Returns (ok, failing_seq_or_None). The oldest retained entry's
+    `prev` is trusted as the window root (older history may be
+    truncated by LEDGER_CAP). Pure read: never mutates the entries."""
+    for i, e in enumerate(entries):
         if ledger_checksum(e, e.get("prev", GENESIS_HASH)) != e.get("checksum"):
             return False, e["seq"]
-        if i > 0 and e.get("prev") != state["ledger"][i - 1].get("checksum"):
+        if i > 0 and e.get("prev") != entries[i - 1].get("checksum"):
             return False, e["seq"]
-    return ok, failing
+    return True, None
+
+
+def verify_ledger_chain():
+    """Verify the lobby ledger chain (the currently swapped-in
+    partition outside room_scope)."""
+    return verify_chain_entries(state["ledger"])
+
+
+def health_report():
+    """Operator-gated health payload (issue #33): liveness, the ledger-chain
+    verification result, state-file age/size and the room count. Verifies
+    the lobby ledger AND every room's own ledger — a private room's chain
+    is as load-bearing as the lobby's — by walking each room's entries
+    directly: no partition is swapped in and no room/member data leaves
+    in the payload (room health is a single boolean). Nothing sensitive:
+    no salt, no token material, no member data. The caller holds `lock`
+    (the chain walks read the live ledgers). Verification reads the
+    in-memory state (which is what the server loaded from disk at boot
+    and has mutated since), not the current on-disk bytes."""
+    ok, failing = verify_ledger_chain()
+    rooms_ok = all(
+        verify_chain_entries(room.get("ledger", []))[0]
+        for room in state.get("rooms", {}).values())
+    try:
+        st = os.stat(STATE_PATH)
+        size = st.st_size
+        age = max(0.0, time.time() - st.st_mtime)
+    except OSError:
+        size, age = 0, None
+    return {
+        "status": "ok" if (ok and rooms_ok) else "degraded",
+        "ledger_ok": ok,
+        "ledger_failing_seq": failing,
+        "ledger_entries": len(state["ledger"]),
+        "room_ledgers_ok": rooms_ok,
+        "state_size_bytes": size,
+        "state_age_seconds": None if age is None else round(age, 1),
+        "room_count": len(state.get("rooms", {})),
+    }
 
 
 # Run the v0.1 -> v0.2 migration now that save_state/ledger_append exist.
@@ -1735,6 +1777,14 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/assets/workboard.css":
                 with open(os.path.join(ROOT, "assets", "workboard.css"), "rb") as f:
                     self._send(200, f.read(), "text/css; charset=utf-8")
+            elif parsed.path == "/api/health":
+                # Operator-gated (do_GET gate above): liveness + ledger
+                # verification + state-file stats, no sensitive data.
+                # 503 when any chain (lobby or room) fails so monitors
+                # can alert.
+                with lock:
+                    report = health_report()
+                self._send(200 if report["status"] == "ok" else 503, report)
             elif parsed.path == "/api/state":
                 with lock:
                     # Explicit public-state allowlist (plus sanitized games);
@@ -3178,6 +3228,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # Ops (issue #33): snapshot state.json before serving so every start
+    # leaves a restorable copy; rotation keeps the newest
+    # PLAYGROUNDS_BACKUP_KEEP (default 10). A backup failure must never
+    # block startup.
+    try:
+        import state_backup
+        snap = state_backup.make_snapshot(STATE_PATH)
+        if snap:
+            print(f"state snapshot: {snap}", flush=True)
+    except Exception as e:
+        print(f"state snapshot failed: {e}", flush=True)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Playgrounds protocol server v0.2 on http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
