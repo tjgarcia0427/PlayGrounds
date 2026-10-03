@@ -44,6 +44,7 @@ function buildCampus() {
   sun.shadow.normalBias=.06;scene.add(sun);
   const rim=new THREE.DirectionalLight('#d1d9ff',1.1);rim.position.set(15,10,-12);scene.add(rim);
   const route=createNavigator(),director=new InteractionDirector(route),art=createArtKit();
+  let stillRenderKey='';
   let portrait=false;const portraitButton=document.getElementById('portraitView');
   const materials=new Map();
   function mat(color) {
@@ -419,7 +420,12 @@ function buildCampus() {
     host.dataset.completed=JSON.stringify(director.completed);
     host.dataset.moving=String([...actors.values()].filter(a=>a.path).length);
     host.dataset.reducedMotion=String(reduce.matches || document.getElementById('quietMotion').checked);
-    renderer.render(scene,camera);
+    // A still scene must also yield GPU time to UI controls. Repaint on view,
+    // roster or pose changes; live motion always renders normally.
+    const stillKey=JSON.stringify([room,detail,follow.value,orbit,zoom,host.clientWidth,host.clientHeight,
+      [...actors.values()].map(a=>[a.agent.id,a.agent.name,a.stamp,a.pose,a.root.position.toArray()])]);
+    if(ambientMotion||stillKey!==stillRenderKey)renderer.render(scene,camera);
+    stillRenderKey=ambientMotion?'':stillKey;
     document.getElementById('portraitNote').hidden=!detail;
     host.dataset.artDirection='core-four-fur-2026-10-03';host.dataset.portrait=String(!!detail);
     host.dataset.artMetrics=JSON.stringify({calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,geometries:renderer.info.memory.geometries,textures:renderer.info.memory.textures});

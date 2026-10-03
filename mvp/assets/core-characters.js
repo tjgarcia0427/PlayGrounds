@@ -36,6 +36,7 @@ void main(){
 }`;
 const fragment=`
 uniform vec3 rootColor,tipColor;
+uniform float layers;
 varying vec2 tex;
 varying float height;
 varying vec3 worldNormal,viewPosition;
@@ -48,6 +49,9 @@ void main(){
   float circumference=max(4.,floor(340.*sin(3.14159265*(ry+.5)/170.)));
   float col=tex.x*circumference;
   for(int dx=-1;dx<=1;dx++){
+   // At room scale follicles are subpixel: one cell avoids 9x redundant shading.
+   // Portraits retain the approved neighboring-cell curl coverage.
+   if(layers<16. && (dy!=0 || dx!=0))continue;
    float cx=floor(col)+float(dx);
    vec2 id=vec2(mod(cx+circumference,circumference),ry);
    float seed=random(id);
